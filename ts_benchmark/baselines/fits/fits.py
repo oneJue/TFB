@@ -5,61 +5,42 @@ import numpy as np
 import pandas as pd
 import torch
 import torch.nn as nn
+from torch.utils.data import DataLoader
 from sklearn.preprocessing import StandardScaler
 from torch import optim
-from torch.utils.data import DataLoader
 from einops import rearrange
-from ts_benchmark.baselines.hdmixer.models.HDMixer import HDMixerModel
-from ts_benchmark.baselines.hdmixer.utils.tools import (
-    EarlyStopping,
-    adjust_learning_rate,
-)
+
+from ts_benchmark.baselines.fits.fits_model import FITSModel
 from ts_benchmark.baselines.utils import (
     forecasting_data_provider,
     train_val_split,
     get_time_mark,
 )
 from ts_benchmark.utils.data_processing import split_time
+from ..time_series_library.utils.tools import EarlyStopping, adjust_learning_rate
 from ...models.model_base import ModelBase, BatchMaker
 
 DEFAULT_HYPER_PARAMS = {
-    "enc_in": 1,
-    "mix_time": 1,
-    "mix_variable": 1,
-    "mix_channel": 1,
-    "deform_patch": 1,
-    "deform_range": 0.25,
-    "lambda_": 1e-1,
-    "r": 1e-2,
-    "mlp_ratio": 1,
-    "window_size": 6,
-    "shift_size": 3,
-    "weight_decay": 1e-3,
-    "num_workers": 10,
-    "num_epochs": 100,
+    "embed": "timeF",
+    "freq": "h",
+    "lradj": "type1",
+    "factor": 1,
+    "activation": "gelu",
+    "dropout": 0.1,
     "batch_size": 32,
-    "patience": 10,
     "lr": 0.0001,
-    "loss": "MAE",
-    "lradj": "type3",
-    "pct_start": 0.3,
-    "e_layers": 1,
-    "d_model": 16,
-    "d_ff": 32,
-    "n_heads": 4,
-    "fc_dropout": 0.3,
-    "head_dropout": 0,
-    "dropout": 0.8,
-    "individual": 0,
-    "patch_len": 16,
-    "stride": 8,
-    "padding_patch": "end",
-    "revin": 1,
-    "affine": 0,
-    "subtract_last": 0,
-    "decomposition": 0,
-    "kernel_size": 25,
-    "use_mlp": False,
+    "num_epochs": 100,
+    "num_workers": 0,
+    "loss": "MSE",
+    "itr": 1,
+    "distil": True,
+    "patience": 3,
+    "cut_freq": 0,
+    "train_mode": 1,
+    "base_T": 24,
+    "H_order": 2,
+    "individual": False,
+    "use_mlp": False,  # New parameter
 }
 
 
@@ -77,7 +58,7 @@ class MLP(nn.Module):
         return x
 
 
-class HDMixerConfig:
+class FITSConfig:
     def __init__(self, **kwargs):
         for key, value in DEFAULT_HYPER_PARAMS.items():
             setattr(self, key, value)
@@ -90,19 +71,22 @@ class HDMixerConfig:
         return self.horizon
 
 
-class HDMixer(ModelBase):
+class FITS(ModelBase):
     def __init__(self, **kwargs):
-        super(HDMixer, self).__init__()
-        self.config = HDMixerConfig(**kwargs)
-        self.scaler1 = StandardScaler()
-        self.scaler2 = StandardScaler()
+        super(FITS, self).__init__()
+        self.config = FITSConfig(**kwargs)
+        self.scaler1 = StandardScaler()  # Changed from scaler to scaler1
+        self.scaler2 = StandardScaler()  # Added scaler2
         self.seq_len = self.config.seq_len
         self.win_size = self.config.seq_len
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.config.cut_freq = (
+                int(self.seq_len // self.config.base_T + 1) * self.config.H_order + 10
+        )
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")  # Added device
 
     @property
     def model_name(self):
-        return "HDMixer"
+        return "FITS"
 
     @staticmethod
     def required_hyper_params() -> dict:
@@ -117,14 +101,8 @@ class HDMixer(ModelBase):
             "norm": "norm",
         }
 
-    def __repr__(self) -> str:
-        """
-        Returns a string representation of the model name.
-        """
-        return self.model_name
-
-    def multi_forecasting_hyper_param_tune(self, train_data: np.ndarray):
-        self.config.freq = "h"
+    def multi_forecasting_hyper_param_tune(self, train_data: pd.DataFrame):
+        self.config.freq = "h"  # Simplified - directly set to "h"
         column_num = train_data.shape[1]
         self.config.enc_in = column_num
         self.config.dec_in = column_num
@@ -135,9 +113,14 @@ class HDMixer(ModelBase):
         else:
             setattr(self.config, "label_len", self.config.seq_len // 2)
 
-    def single_forecasting_hyper_param_tune(self, train_data: np.ndarray):
-        # For numpy array, we cannot infer frequency, so we default to 'h'
-        self.config.freq = "h"
+    def single_forecasting_hyper_param_tune(self, train_data: pd.DataFrame):
+        freq = pd.infer_freq(train_data.index)
+        if freq == None:
+            raise ValueError("Irregular time intervals")
+        elif freq[0].lower() not in ["m", "w", "b", "d", "h", "t", "s"]:
+            self.config.freq = "s"
+        else:
+            self.config.freq = freq[0].lower()
 
         column_num = train_data.shape[1]
         self.config.enc_in = column_num
@@ -146,31 +129,22 @@ class HDMixer(ModelBase):
 
         setattr(self.config, "label_len", self.config.horizon)
 
-    def detect_hyper_param_tune(self, train_data: np.ndarray):
-        # For numpy array, we cannot infer frequency, so we default to 'h'
-        self.config.freq = "h"
+    def padding_data_for_forecast(self, test):
+        time_column_data = test.index
+        data_colums = test.columns
+        start = time_column_data[-1]
+        date = pd.date_range(
+            start=start, periods=self.config.horizon + 1, freq=self.config.freq.upper()
+        )
+        df = pd.DataFrame(columns=data_colums)
 
-        column_num = train_data.shape[1]
-        self.config.enc_in = column_num
-        self.config.dec_in = column_num
-        self.config.c_out = column_num
-        self.config.label_len = 48
+        df.iloc[: self.config.horizon + 1, :] = 0
 
-    def padding_data_for_forecast(self, test: np.ndarray) -> np.ndarray:
-        """
-        Pad the test data for forecast using numpy operations.
-
-        :param test: numpy array of shape (seq_len, n_features)
-        :return: padded numpy array
-        """
-        # Create padding of zeros
-        padding_shape = (self.config.horizon, test.shape[1])
-        padding = np.zeros(padding_shape)
-
-        # Concatenate test data with padding
-        padded_test = np.concatenate([test, padding], axis=0)
-
-        return padded_test
+        df["date"] = date
+        df = df.set_index("date")
+        new_df = df.iloc[1:]
+        test = pd.concat([test, new_df])
+        return test
 
     def validate(
             self, valid_data_loader: DataLoader, series_dim: int, criterion: torch.nn.Module
@@ -187,42 +161,28 @@ class HDMixer(ModelBase):
         self.model.eval()
         if self.MLP is not None:
             self.MLP.eval()
-        with torch.no_grad():
-            for input, target in valid_data_loader:
-                input, target = (
-                    input.to(self.device),
-                    target.to(self.device),
-                )
 
-                # Call model with appropriate inputs
-                exog_future = target[:, -config.horizon:, series_dim:].to(self.device) if target.shape[-1] > series_dim else None
-                output, PaEN_Loss = self.model(input)
+        for input, target in valid_data_loader:
+            input, target = (
+                input.to(self.device),
+                target.to(self.device),
+            )
 
-                if self.config.use_mlp and self.MLP is not None:
-                    transformer_output = output[:, -config.horizon:, :series_dim]
-                    if exog_future is not None:
-                        output = self.MLP(torch.cat((transformer_output, exog_future), dim=-1))
-                    else:
-                        output = transformer_output
-                else:
-                    output = output[:, -config.horizon:, :series_dim]
+            # Extract exog_future from target
+            exog_future = target[:, -config.horizon:, series_dim:].to(self.device)
 
-                target = target[:, -config.horizon:, :series_dim]
+            # Model call
+            output, low = self.model(input)
 
-                # Arctangent loss with weight decay
-                self.ratio = np.array(
-                    [
-                        -1 * math.atan(i + 1) + math.pi / 4 + 1
-                        for i in range(self.config.horizon)
-                    ]
-                )
-                self.ratio = torch.tensor(self.ratio).unsqueeze(-1).to(self.device)
+            if self.config.use_mlp and self.MLP is not None:
+                transformer_output = output[:, -config.horizon:, :series_dim]
+                output = self.MLP(torch.cat((transformer_output, exog_future), dim=-1))
+            else:
+                output = output[:, -config.horizon:, :series_dim]
 
-                output = output * self.ratio
-                target = target * self.ratio
-
-                loss = criterion(output, target).detach().cpu().numpy()
-                total_loss.append(loss)
+            target = target[:, -config.horizon:, :series_dim]
+            loss = criterion(output, target).detach().cpu().numpy()
+            total_loss.append(loss)
 
         total_loss = np.mean(total_loss)
         self.model.train()
@@ -232,7 +192,7 @@ class HDMixer(ModelBase):
 
     def forecast_fit(
             self,
-            train_valid_data: np.ndarray,
+            train_valid_data: pd.DataFrame,
             *,
             covariates: Optional[dict] = None,
             train_ratio_in_tv: float = 1.0,
@@ -240,20 +200,32 @@ class HDMixer(ModelBase):
     ) -> "ModelBase":
         """
         Train the model.
-        :param train_valid_data: Time series data used for training and validation (numpy array).
+        :param train_valid_data: Time series data used for training and validation.
         :param covariates: Additional external variables.
         :param train_ratio_in_tv: Represents the splitting ratio of the training set validation set. If it is equal to 1, it means that the validation set is not partitioned.
         :return: The fitted model object.
         """
         if covariates is None:
             covariates = {}
-        series_dim = train_valid_data.shape[-2]
-        exog_data = covariates.get("exog", None)
-        if exog_data is not None:
-            train_valid_data = np.concatenate((train_valid_data, exog_data), axis=1)
-            exog_dim = exog_data.shape[-2]
+
+        # Handle 3D data format
+        if len(train_valid_data.shape) == 3:
+            series_dim = train_valid_data.shape[-2]
+            exog_data = covariates.get("exog", None)
+            if exog_data is not None:
+                train_valid_data = np.concatenate((train_valid_data, exog_data), axis=1)
+                exog_dim = exog_data.shape[-2]
+            else:
+                exog_dim = 0
         else:
-            exog_dim = 0
+            # Handle 2D DataFrame format (original)
+            series_dim = train_valid_data.shape[-1]
+            exog_data = covariates.get("exog", None)
+            if exog_data is not None:
+                train_valid_data = pd.concat([train_valid_data, exog_data], axis=1)
+                exog_dim = exog_data.shape[-1]
+            else:
+                exog_dim = 0
 
         if train_valid_data.shape[1] == 1:
             train_drop_last = False
@@ -262,9 +234,10 @@ class HDMixer(ModelBase):
             train_drop_last = True
             self.multi_forecasting_hyper_param_tune(train_valid_data)
 
-        self.model = HDMixerModel(self.config)
+        setattr(self.config, "task_name", "short_term_forecast")
+        self.model = FITSModel(self.config)
 
-        # Initialize MLP if enabled
+        # Initialize MLP if use_mlp is True
         if self.config.use_mlp:
             input_size = series_dim + exog_dim
             output_size = series_dim
@@ -281,37 +254,63 @@ class HDMixer(ModelBase):
         train_data, valid_data = train_val_split(
             train_valid_data, train_ratio_in_tv, config.seq_len
         )
-        train_data_l = train_data.shape[0]
-        valid_data_l = valid_data.shape[0]
 
-        # Fit scalers separately for series and exog data
-        if exog_dim > 0:
-            # Fit scaler1 for series data
-            self.scaler1.fit(rearrange(train_data[:, :series_dim, :], 'l c n->(l n) c'))
-            # Fit scaler2 for exog data
-            self.scaler2.fit(rearrange(train_data[:, series_dim:, :], 'l c n->(l n) c'))
+        # Handle both 2D and 3D data formats for scaling
+        if len(train_data.shape) == 3:
+            train_data_l = train_data.shape[0]
+            valid_data_l = valid_data.shape[0] if train_ratio_in_tv != 1 else 0
 
-            if config.norm:
-                # Scale series data
-                scaled_series = self.scaler1.transform(rearrange(train_data[:, :series_dim, :], 'l c n->(l n) c'))
-                train_series = rearrange(scaled_series, '(l n) c -> l c n', l=train_data_l)
+            # Fit scalers for 3D data
+            if exog_dim > 0:
+                # Fit scaler1 for series data
+                self.scaler1.fit(rearrange(train_data[:, :series_dim, :], 'l c n->(l n) c'))
+                # Fit scaler2 for exog data
+                self.scaler2.fit(rearrange(train_data[:, series_dim:, :], 'l c n->(l n) c'))
 
-                # Scale exog data
-                scaled_exog = self.scaler2.transform(rearrange(train_data[:, series_dim:, :], 'l c n->(l n) c'))
-                train_exog = rearrange(scaled_exog, '(l n) c -> l c n', l=train_data_l)
+                if config.norm:
+                    # Scale series data
+                    scaled_series = self.scaler1.transform(rearrange(train_data[:, :series_dim, :], 'l c n->(l n) c'))
+                    train_series = rearrange(scaled_series, '(l n) c -> l c n', l=train_data_l)
 
-                # Concatenate scaled data
-                train_data = np.concatenate([train_series, train_exog], axis=1)
+                    # Scale exog data
+                    scaled_exog = self.scaler2.transform(rearrange(train_data[:, series_dim:, :], 'l c n->(l n) c'))
+                    train_exog = rearrange(scaled_exog, '(l n) c -> l c n', l=train_data_l)
+
+                    # Concatenate scaled data
+                    train_data = np.concatenate([train_series, train_exog], axis=1)
+            else:
+                # Only series data, use scaler1
+                self.scaler1.fit(rearrange(train_data, 'l c n->(l n) c'))
+                if config.norm:
+                    scaled_data = self.scaler1.transform(rearrange(train_data, 'l c n->(l n) c'))
+                    train_data = rearrange(scaled_data, '(l n) c -> l c n', l=train_data_l)
         else:
-            # Only series data, use scaler1
-            self.scaler1.fit(rearrange(train_data, 'l c n->(l n) c'))
+            # Handle 2D DataFrame format (original)
+            self.scaler1.fit(train_data.values[:, :series_dim])
+            if exog_dim > 0:
+                self.scaler2.fit(train_data.values[:, series_dim:])
+
             if config.norm:
-                scaled_data = self.scaler1.transform(rearrange(train_data, 'l c n->(l n) c'))
-                train_data = rearrange(scaled_data, '(l n) c -> l c n', l=train_data_l)
+                if exog_dim > 0:
+                    # Scale series and exog data separately
+                    series_scaled = self.scaler1.transform(train_data.values[:, :series_dim])
+                    exog_scaled = self.scaler2.transform(train_data.values[:, series_dim:])
+                    scaled_values = np.concatenate([series_scaled, exog_scaled], axis=1)
+                    train_data = pd.DataFrame(
+                        scaled_values,
+                        columns=train_data.columns,
+                        index=train_data.index,
+                    )
+                else:
+                    train_data = pd.DataFrame(
+                        self.scaler1.transform(train_data.values),
+                        columns=train_data.columns,
+                        index=train_data.index,
+                    )
 
         if train_ratio_in_tv != 1:
             if config.norm:
-                if exog_dim > 0:
+                if len(valid_data.shape) == 3 and exog_dim > 0:
                     # Scale validation series data
                     scaled_series = self.scaler1.transform(rearrange(valid_data[:, :series_dim, :], 'l c n->(l n) c'))
                     valid_series = rearrange(scaled_series, '(l n) c -> l c n', l=valid_data_l)
@@ -322,10 +321,26 @@ class HDMixer(ModelBase):
 
                     # Concatenate scaled data
                     valid_data = np.concatenate([valid_series, valid_exog], axis=1)
-                else:
+                elif len(valid_data.shape) == 3:
                     scaled_data = self.scaler1.transform(rearrange(valid_data, 'l c n->(l n) c'))
                     valid_data = rearrange(scaled_data, '(l n) c -> l c n', l=valid_data_l)
-
+                else:
+                    # Handle 2D DataFrame format
+                    if exog_dim > 0:
+                        series_scaled = self.scaler1.transform(valid_data.values[:, :series_dim])
+                        exog_scaled = self.scaler2.transform(valid_data.values[:, series_dim:])
+                        scaled_values = np.concatenate([series_scaled, exog_scaled], axis=1)
+                        valid_data = pd.DataFrame(
+                            scaled_values,
+                            columns=valid_data.columns,
+                            index=valid_data.index,
+                        )
+                    else:
+                        valid_data = pd.DataFrame(
+                            self.scaler1.transform(valid_data.values),
+                            columns=valid_data.columns,
+                            index=valid_data.index,
+                        )
             valid_dataset, valid_data_loader = forecasting_data_provider(
                 valid_data,
                 config,
@@ -352,7 +367,7 @@ class HDMixer(ModelBase):
         else:
             criterion = nn.HuberLoss(delta=0.5)
 
-        # Mixed optimizer for MLP support
+        # Modified optimizer for MLP support
         if self.MLP is not None:
             optimizer = optim.Adam([
                 {'params': self.model.parameters(), 'lr': config.lr},
@@ -375,6 +390,7 @@ class HDMixer(ModelBase):
             self.model.train()
             if self.MLP is not None:
                 self.MLP.train()
+
             for i, (input, target) in enumerate(train_data_loader):
                 optimizer.zero_grad()
                 input, target = (
@@ -382,43 +398,31 @@ class HDMixer(ModelBase):
                     target.to(self.device),
                 )
 
-                # Call model
-                output, PaEN_Loss = self.model(input)
+                # Extract exog_future from target
+                exog_future = target[:, -config.horizon:, series_dim:].to(self.device)
+
+                # Model call
+                output, low = self.model(input)
 
                 if self.config.use_mlp and self.MLP is not None:
                     transformer_output = output[:, -config.horizon:, :series_dim]
-                    exog_future = target[:, -config.horizon:, series_dim:]
                     output = self.MLP(torch.cat((transformer_output, exog_future), dim=-1))
                 else:
                     output = output[:, -config.horizon:, :series_dim]
 
                 target = target[:, -config.horizon:, :series_dim]
-
-                # Arctangent loss with weight decay
-                self.ratio = np.array(
-                    [
-                        -1 * math.atan(i + 1) + math.pi / 4 + 1
-                        for i in range(self.config.horizon)
-                    ]
-                )
-                self.ratio = torch.tensor(self.ratio).unsqueeze(-1).to(self.device)
-
-                output = output * self.ratio
-                target = target * self.ratio
-
                 loss = criterion(output, target)
 
-                total_loss = loss + PaEN_Loss
-                total_loss.backward()
-
+                loss.backward()
                 optimizer.step()
 
             if train_ratio_in_tv != 1:
                 valid_loss = self.validate(valid_data_loader, series_dim, criterion)
+                # Modified early stopping
                 if self.MLP is not None:
-                    self.early_stopping(valid_loss, {'hdmixer': self.model, 'mlp': self.MLP})
+                    self.early_stopping(valid_loss, {'transformer': self.model, 'mlp': self.MLP})
                 else:
-                    self.early_stopping(valid_loss, {'hdmixer': self.model})
+                    self.early_stopping(valid_loss, {'transformer': self.model})
                 if self.early_stopping.early_stop:
                     break
 
@@ -427,14 +431,14 @@ class HDMixer(ModelBase):
     def forecast(
             self,
             horizon: int,
-            series: np.ndarray,
+            series: pd.DataFrame,
             *,
             covariates: Optional[dict] = None,
     ) -> np.ndarray:
         """
         Make predictions.
         :param horizon: The predicted length.
-        :param series: Time series data used for prediction (numpy array).
+        :param series: Time series data used for prediction.
         :param covariates: Additional external variables
         :return: An array of predicted results.
         """
@@ -443,7 +447,7 @@ class HDMixer(ModelBase):
         series_dim = series.shape[-1]
         exog_data = covariates.get("exog", None)
         if exog_data is not None:
-            series = np.concatenate([series, exog_data], axis=1)
+            series = pd.concat([series, exog_data], axis=1)
             if (
                     hasattr(self.config, "output_chunk_length")
                     and horizon != self.config.output_chunk_length
@@ -452,32 +456,41 @@ class HDMixer(ModelBase):
                     f"Error: 'exog' is enabled during training, but horizon ({horizon}) != output_chunk_length ({self.config.output_chunk_length}) during forecast."
                 )
 
+        # Modified model loading
         if self.early_stopping.check_point is not None:
-            self.model.load_state_dict(self.early_stopping.check_point['hdmixer'])
+            self.model.load_state_dict(self.early_stopping.check_point['transformer'])
             if self.MLP is not None and 'mlp' in self.early_stopping.check_point:
                 self.MLP.load_state_dict(self.early_stopping.check_point['mlp'])
 
         if self.config.norm:
             if exog_data is not None:
                 # Scale series data with scaler1
-                series_values = series[:, :series_dim]
+                series_values = series.iloc[:, :series_dim].values
                 scaled_series = self.scaler1.transform(series_values)
 
                 # Scale exog data with scaler2
-                exog_values = series[:, series_dim:]
+                exog_values = series.iloc[:, series_dim:].values
                 scaled_exog = self.scaler2.transform(exog_values)
 
                 # Combine scaled data
-                series = np.concatenate([scaled_series, scaled_exog], axis=1)
+                scaled_values = np.concatenate([scaled_series, scaled_exog], axis=1)
+                series = pd.DataFrame(
+                    scaled_values,
+                    columns=series.columns,
+                    index=series.index,
+                )
             else:
-                series = self.scaler1.transform(series)
+                series = pd.DataFrame(
+                    self.scaler1.transform(series.values),
+                    columns=series.columns,
+                    index=series.index,
+                )
 
         if self.model is None:
             raise ValueError("Model not trained. Call the fit() function first.")
 
         config = self.config
-        # Split the series for forecasting
-        test = series[-config.seq_len:]
+        series, test = split_time(series, len(series) - config.seq_len)
         test = self.padding_data_for_forecast(test)
 
         test_data_set, test_data_loader = forecasting_data_provider(
@@ -493,20 +506,21 @@ class HDMixer(ModelBase):
         with torch.no_grad():
             answer = None
             while answer is None or answer.shape[0] < horizon:
-                for data in test_data_loader:
-                    # Handle both 2-tuple and 4-tuple returns from data loader
-                    if len(data) == 2:
-                        input, target = data
+                # Check if data loader returns 2 or 4 values
+                for batch_data in test_data_loader:
+                    if len(batch_data) == 2:
+                        input, target = batch_data
                         input, target = input.to(self.device), target.to(self.device)
                     else:
-                        input, target, input_mark, target_mark = data
+                        input, target, input_mark, target_mark = batch_data
                         input, target = input.to(self.device), target.to(self.device)
+                        input_mark, target_mark = input_mark.to(self.device), target_mark.to(self.device)
 
-                    output, PaEN_Loss = self.model(input)
+                    exog_future = target[:, -config.horizon:, series_dim:].to(self.device)
+                    output, low = self.model(input)
 
                     if self.config.use_mlp and self.MLP is not None:
                         transformer_output = output[:, -config.horizon:, :series_dim]
-                        exog_future = target[:, -config.horizon:, series_dim:]
                         output = self.MLP(torch.cat((transformer_output, exog_future), dim=-1))
                     else:
                         output = output[:, -config.horizon:, :series_dim]
@@ -528,10 +542,10 @@ class HDMixer(ModelBase):
                     return answer[-horizon:, :series_dim]
 
                 output = output.cpu().numpy()[:, -config.horizon:]
-                # Update test data with predictions
-                test[config.seq_len:config.seq_len + config.horizon] = output[0]
+                for i in range(config.horizon):
+                    test.iloc[i + config.seq_len] = output[0, i, :]
 
-                test = test[config.horizon:]
+                test = test.iloc[config.horizon:]
                 test = self.padding_data_for_forecast(test)
 
                 test_data_set, test_data_loader = forecasting_data_provider(
@@ -544,19 +558,19 @@ class HDMixer(ModelBase):
                 )
 
     def batch_forecast(
-            self, horizon: int, batch_maker: BatchMaker, exog_futures, i, **kwargs
+            self, horizon: int, batch_maker: BatchMaker, exog_futures=None, i=0, **kwargs
     ) -> np.ndarray:
         """
         Make predictions by batch.
 
         :param horizon: The length of each prediction.
         :param batch_maker: Make batch data used for prediction.
-        :param exog_futures: Future exogenous variables.
-        :param i: Batch index.
+        :param exog_futures: Future exogenous variables
+        :param i: Batch index
         :return: An array of predicted results.
         """
         if self.early_stopping.check_point is not None:
-            self.model.load_state_dict(self.early_stopping.check_point['hdmixer'])
+            self.model.load_state_dict(self.early_stopping.check_point['transformer'])
             if self.MLP is not None and 'mlp' in self.early_stopping.check_point:
                 self.MLP.load_state_dict(self.early_stopping.check_point['mlp'])
 
@@ -571,8 +585,8 @@ class HDMixer(ModelBase):
 
         input_data = batch_maker.make_batch(self.config.batch_size, self.config.seq_len)
         input_np = input_data["input"]
-        real_batch_size = self.config.batch_size * input_np.shape[3]
-        series_dim = input_np.shape[-2]
+        real_batch_size = self.config.batch_size * input_np.shape[3] if len(input_np.shape) > 3 else input_np.shape[0]
+        series_dim = input_np.shape[-2] if len(input_np.shape) > 3 else input_np.shape[-1]
 
         if input_data["covariates"] is None:
             covariates = {}
@@ -580,7 +594,7 @@ class HDMixer(ModelBase):
             covariates = input_data["covariates"]
         exog_data = covariates.get("exog")
         if exog_data is not None:
-            exog_dim = exog_data.shape[-2]
+            exog_dim = exog_data.shape[-2] if len(exog_data.shape) > 3 else exog_data.shape[-1]
             input_np = np.concatenate((input_np, exog_data), axis=2)
             if (
                     hasattr(self.config, "output_chunk_length")
@@ -592,7 +606,9 @@ class HDMixer(ModelBase):
         else:
             exog_dim = 0
 
-        input_np = rearrange(input_np, 'b l c n -> (b n) l c')
+        # Handle 3D/4D data reshaping
+        if len(input_np.shape) == 4:
+            input_np = rearrange(input_np, 'b l c n -> (b n) l c')
         input_np_b = input_np.shape[0]
 
         if self.config.norm:
@@ -603,8 +619,8 @@ class HDMixer(ModelBase):
                 scaled_series = rearrange(scaled_series, '(b l) c -> b l c', b=input_np_b)
 
                 # Scale exog data with scaler2
-                exog_data = input_np[:, :, series_dim:]
-                scaled_exog = self.scaler2.transform(rearrange(exog_data, 'b l c->(b l) c'))
+                exog_data_to_scale = input_np[:, :, series_dim:]
+                scaled_exog = self.scaler2.transform(rearrange(exog_data_to_scale, 'b l c->(b l) c'))
                 scaled_exog = rearrange(scaled_exog, '(b l) c -> b l c', b=input_np_b)
 
                 # Combine scaled data
@@ -613,23 +629,25 @@ class HDMixer(ModelBase):
                 scaled_data = self.scaler1.transform(rearrange(input_np, 'b l c->(b l) c'))
                 input_np = rearrange(scaled_data, '(b l) c -> b l c', b=input_np_b)
 
-        exog_future = torch.tensor(exog_futures[i * real_batch_size: (i + 1) * real_batch_size, -horizon:, :]).to(
-            self.device)
+        # Prepare exog_future if provided
+        exog_future = None
+        if exog_futures is not None and exog_dim > 0:
+            exog_future = torch.tensor(exog_futures[i * real_batch_size: (i + 1) * real_batch_size, -horizon:, :]).to(
+                self.device)
 
-        if self.config.norm and exog_dim > 0:
-            exog_future_np = exog_future.cpu().numpy()
-            exog_future_b = exog_future_np.shape[0]
-            scaled_exog_future = self.scaler2.transform(rearrange(exog_future_np, 'b l c->(b l) c'))
-            scaled_exog_future = rearrange(scaled_exog_future, '(b l) c -> b l c', b=exog_future_b)
-            exog_future = torch.tensor(scaled_exog_future).to(self.device)
+            if self.config.norm:
+                exog_future_np = exog_future.cpu().numpy()
+                exog_future_b = exog_future_np.shape[0]
+                scaled_exog_future = self.scaler2.transform(rearrange(exog_future_np, 'b l c->(b l) c'))
+                scaled_exog_future = rearrange(scaled_exog_future, '(b l) c -> b l c', b=exog_future_b)
+                exog_future = torch.tensor(scaled_exog_future).to(self.device)
 
-        answers = torch.tensor(self._perform_rolling_predictions(horizon, input_np, exog_future, series_dim))
-        answers = answers[:, -horizon:, :series_dim].to(self.device)
+        answers = self._perform_rolling_predictions(horizon, input_np, exog_future, series_dim)
 
         if self.config.norm:
             # Only inverse transform series data with scaler1
             answers_b = answers.shape[0]
-            scaled_data = self.scaler1.inverse_transform(rearrange(answers.cpu().detach().numpy(), 'b l c->(b l) c'))
+            scaled_data = self.scaler1.inverse_transform(rearrange(answers, 'b l c->(b l) c'))
             answers = rearrange(scaled_data, '(b l) c -> b l c', b=answers_b)
 
         return answers
@@ -638,30 +656,31 @@ class HDMixer(ModelBase):
             self,
             horizon: int,
             input_np: np.ndarray,
-            exog_future: torch.Tensor,
+            exog_future: Optional[torch.Tensor],
             series_dim: int,
-    ) -> list:
+    ) -> np.ndarray:
         """
-        Perform simplified rolling predictions using the given input data.
+        Perform rolling predictions using the given input data.
 
         :param horizon: Length of predictions to be made.
         :param input_np: Numpy array of input data.
         :param exog_future: Future exogenous variables.
-        :param series_dim: Number of series dimensions.
+        :param series_dim: Dimension of series data.
         :return: Array of predicted results.
         """
         rolling_time = 0
         answers = []
+
         with torch.no_grad():
             while not answers or sum(a.shape[1] for a in answers) < horizon:
                 input = torch.tensor(input_np, dtype=torch.float32).to(self.device)
-                output, PaEN_Loss = self.model(input)
+                output, low = self.model(input)
 
-                if self.config.use_mlp and self.MLP is not None:
-                    output = torch.tensor(output[:, -horizon:, :series_dim]).to(self.device)
-                    output = self.MLP(torch.cat((output.to(torch.float32), exog_future.to(torch.float32)), dim=-1))
+                if self.config.use_mlp and self.MLP is not None and exog_future is not None:
+                    transformer_output = output[:, -self.config.horizon:, :series_dim]
+                    output = self.MLP(torch.cat((transformer_output, exog_future), dim=-1))
                 else:
-                    output = output[:, -horizon:, :series_dim]
+                    output = output[:, -self.config.horizon:, :series_dim]
 
                 column_num = output.shape[-1]
                 real_batch_size = output.shape[0]
@@ -671,18 +690,21 @@ class HDMixer(ModelBase):
                     .reshape(real_batch_size, -1, column_num)[:, -self.config.horizon:, :]
                 )
                 answers.append(answer)
+
                 if sum(a.shape[1] for a in answers) >= horizon:
                     break
+
                 rolling_time += 1
                 output = output.cpu().numpy()[:, -self.config.horizon:, :]
                 input_np = self._get_rolling_data(input_np, output, rolling_time)
+
         answers = np.concatenate(answers, axis=1)
         return answers[:, -horizon:, :]
 
     def _get_rolling_data(
             self,
             input_np: np.ndarray,
-            output: Optional[np.ndarray],
+            output: np.ndarray,
             rolling_time: int,
     ) -> np.ndarray:
         """

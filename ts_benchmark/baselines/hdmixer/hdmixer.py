@@ -35,7 +35,7 @@ DEFAULT_HYPER_PARAMS = {
     "window_size": 6,
     "shift_size": 3,
     "weight_decay": 1e-3,
-    "num_workers": 10,
+    "num_workers": 2,
     "num_epochs": 100,
     "batch_size": 32,
     "patience": 10,

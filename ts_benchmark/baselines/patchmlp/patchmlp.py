@@ -55,6 +55,7 @@ DEFAULT_HYPER_PARAMS = {
     "task_name": "short_term_forecast",
     "parallel_strategy": "DP",
     "norm": True,
+    "use_norm": True #model need
 }
 
 
@@ -179,7 +180,7 @@ class PatchMLP(ModelBase):
                 exog_future = target[:, -config.horizon:, series_dim:].to(self.device)
 
                 # For PatchMLP, we pass input and get output
-                output, _ = self.model(input)
+                output = self.model(input)
 
                 if self.config.use_mlp and self.MLP is not None:
                     transformer_output = output[:, -config.horizon:, :series_dim]
@@ -359,7 +360,7 @@ class PatchMLP(ModelBase):
                 exog_future = target[:, -config.horizon:, series_dim:].to(self.device)
 
                 # Forward pass - PatchMLP only takes input
-                output, _ = self.model(input)
+                output = self.model(input)
 
                 if self.config.use_mlp and self.MLP is not None:
                     transformer_output = output[:, -config.horizon:, :series_dim]
@@ -594,7 +595,7 @@ class PatchMLP(ModelBase):
             while not answers or sum(a.shape[1] for a in answers) < horizon:
                 input = torch.tensor(input_np, dtype=torch.float32).to(self.device)
 
-                output, _ = self.model(input)
+                output = self.model(input)
 
                 if self.config.use_mlp and self.MLP is not None:
                     output = torch.tensor(output[:, -horizon:, :series_dim]).to(self.device)
