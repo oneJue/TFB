@@ -21,10 +21,7 @@ class ForecastingStrategy(Strategy, metaclass=abc.ABCMeta):
     The base class for forecasting strategies
     """
 
-    REQUIRED_CONFIGS = [
-        "seed",
-        "deterministic"
-    ]
+    REQUIRED_CONFIGS = ["seed", "deterministic"]
 
     def execute(self, series_input, model_factory: ModelFactory) -> Any:
         """
@@ -52,10 +49,14 @@ class ForecastingStrategy(Strategy, metaclass=abc.ABCMeta):
 
         if is_union:
             # For union mode, stack numpy arrays
-            data = np.stack([data_pool.get_series(name).to_numpy() for name in series_input], axis=2)
+            data = np.stack(
+                [data_pool.get_series(name).to_numpy() for name in series_input], axis=2
+            )
         else:
             # For single mode, convert to numpy array and add one dimension at the end
-            data = np.expand_dims(data_pool.get_series(series_input).to_numpy(), axis=-1)
+            data = np.expand_dims(
+                data_pool.get_series(series_input).to_numpy(), axis=-1
+            )
 
         # Execute with exception handling
         try:
@@ -103,5 +104,5 @@ class ForecastingStrategy(Strategy, metaclass=abc.ABCMeta):
             train_valid_data,
             int(len(train_valid_data) * train_ratio_in_tv),
         )
-        scaler = StandardScaler().fit(rearrange(train_data,"l c n->(l n) c"))
+        scaler = StandardScaler().fit(rearrange(train_data, "l c n->(l n) c"))
         return scaler

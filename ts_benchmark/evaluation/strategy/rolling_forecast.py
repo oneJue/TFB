@@ -375,9 +375,7 @@ class RollingForecast(ForecastingStrategy):
         target_train_valid_data, exog_train_valid_data = split_channel(
             train_valid_data, target_channel
         )
-        target_test_data, exog_test_data = split_channel(
-            test_data, target_channel
-        )
+        target_test_data, exog_test_data = split_channel(test_data, target_channel)
         target4batch, exog_data4batch = split_channel(series, target_channel)
         covariates_train, covariates4batch = {}, {}
         covariates_train["exog"] = exog_train_valid_data
@@ -408,18 +406,22 @@ class RollingForecast(ForecastingStrategy):
         predict_batch_maker = RollingForecastPredictBatchMaker(batch_maker)
 
         targets = batch_maker.make_batch_eval(horizon)["target"]
-        exog_futures= batch_maker.make_batch_eval(horizon)["covariates"].get("exog", None)
+        exog_futures = batch_maker.make_batch_eval(horizon)["covariates"].get(
+            "exog", None
+        )
         # Convert reshape to rearrange
-        targets = rearrange(targets, 'b t c n -> (b n) t c')
-        exog_futures = rearrange(exog_futures, 'b t c n -> (b n) t c')
-        i=0
+        targets = rearrange(targets, "b t c n -> (b n) t c")
+        exog_futures = rearrange(exog_futures, "b t c n -> (b n) t c")
+        i = 0
         while predict_batch_maker.has_more_batches():
             start_inference_time = time.time()
-            predicts = model.batch_forecast(horizon, predict_batch_maker,exog_futures,i)
+            predicts = model.batch_forecast(
+                horizon, predict_batch_maker, exog_futures, i
+            )
             end_inference_time = time.time()
             total_inference_time += end_inference_time - start_inference_time
             all_predicts.append(predicts)
-            i=i+1
+            i = i + 1
 
         all_predicts = np.concatenate(all_predicts, axis=0)
 

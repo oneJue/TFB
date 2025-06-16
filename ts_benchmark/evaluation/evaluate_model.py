@@ -154,10 +154,14 @@ def eval_model(
             eval_backend.schedule(strategy.execute, (series_list, model_factory))
         )
     else:
-        result_list.extend([
-            eval_backend.schedule(strategy.execute, (series_name, model_factory))
-            for series_name in tqdm.tqdm(series_list, desc=f"scheduling {model_factory.model_name}")
-        ])
+        result_list.extend(
+            [
+                eval_backend.schedule(strategy.execute, (series_name, model_factory))
+                for series_name in tqdm.tqdm(
+                    series_list, desc=f"scheduling {model_factory.model_name}"
+                )
+            ]
+        )
 
     return EvalResult(strategy, result_list, model_factory, series_list)
 

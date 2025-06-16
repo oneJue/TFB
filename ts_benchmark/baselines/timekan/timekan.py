@@ -156,7 +156,7 @@ class TimeKAN(ModelBase):
         setattr(self.config, "label_len", self.config.horizon)
 
     def validate(
-            self, valid_data_loader: DataLoader, series_dim: int, criterion: torch.nn.Module
+        self, valid_data_loader: DataLoader, series_dim: int, criterion: torch.nn.Module
     ) -> float:
         """
         Validates the model performance on the provided validation dataset.
@@ -175,23 +175,23 @@ class TimeKAN(ModelBase):
             input, target = input.to(self.device), target.to(self.device)
 
             # decoder input
-            dec_input = torch.zeros_like(target[:, -config.horizon:, :]).float()
+            dec_input = torch.zeros_like(target[:, -config.horizon :, :]).float()
             dec_input = (
                 torch.cat([target[:, : config.label_len, :], dec_input], dim=1)
                 .float()
                 .to(self.device)
             )
 
-            exog_future = target[:, -config.horizon:, series_dim:].to(self.device)
+            exog_future = target[:, -config.horizon :, series_dim:].to(self.device)
             output = self.model(input)
 
             if self.config.use_mlp and self.MLP is not None:
-                transformer_output = output[:, -config.horizon:, :series_dim]
+                transformer_output = output[:, -config.horizon :, :series_dim]
                 output = self.MLP(torch.cat((transformer_output, exog_future), dim=-1))
             else:
-                output = output[:, -config.horizon:, :series_dim]
+                output = output[:, -config.horizon :, :series_dim]
 
-            target = target[:, -config.horizon:, :series_dim]
+            target = target[:, -config.horizon :, :series_dim]
             loss = criterion(output, target).detach().cpu().numpy()
             total_loss.append(loss)
 
@@ -202,12 +202,12 @@ class TimeKAN(ModelBase):
         return total_loss
 
     def forecast_fit(
-            self,
-            train_valid_data: np.ndarray,
-            *,
-            covariates: Optional[dict] = None,
-            train_ratio_in_tv: float = 1.0,
-            **kwargs,
+        self,
+        train_valid_data: np.ndarray,
+        *,
+        covariates: Optional[dict] = None,
+        train_ratio_in_tv: float = 1.0,
+        **kwargs,
     ) -> "ModelBase":
         """
         Train the model.
@@ -249,7 +249,9 @@ class TimeKAN(ModelBase):
         if self.config.use_mlp:
             input_size = series_dim + exog_dim
             output_size = series_dim
-            self.MLP = MLP(input_size=input_size, hidden_size1=2048, output_size=output_size)
+            self.MLP = MLP(
+                input_size=input_size, hidden_size1=2048, output_size=output_size
+            )
             self.MLP.to(self.device)
         else:
             self.MLP = None
@@ -269,44 +271,64 @@ class TimeKAN(ModelBase):
         # Fit scalers
         if exog_dim > 0:
             # Fit scaler1 for series data
-            self.scaler1.fit(rearrange(train_data[:, :series_dim, :], 'l c n->(l n) c'))
+            self.scaler1.fit(rearrange(train_data[:, :series_dim, :], "l c n->(l n) c"))
             # Fit scaler2 for exog data
-            self.scaler2.fit(rearrange(train_data[:, series_dim:, :], 'l c n->(l n) c'))
+            self.scaler2.fit(rearrange(train_data[:, series_dim:, :], "l c n->(l n) c"))
 
             if config.norm:
                 # Scale series data
-                scaled_series = self.scaler1.transform(rearrange(train_data[:, :series_dim, :], 'l c n->(l n) c'))
-                train_series = rearrange(scaled_series, '(l n) c -> l c n', l=train_data_l)
+                scaled_series = self.scaler1.transform(
+                    rearrange(train_data[:, :series_dim, :], "l c n->(l n) c")
+                )
+                train_series = rearrange(
+                    scaled_series, "(l n) c -> l c n", l=train_data_l
+                )
 
                 # Scale exog data
-                scaled_exog = self.scaler2.transform(rearrange(train_data[:, series_dim:, :], 'l c n->(l n) c'))
-                train_exog = rearrange(scaled_exog, '(l n) c -> l c n', l=train_data_l)
+                scaled_exog = self.scaler2.transform(
+                    rearrange(train_data[:, series_dim:, :], "l c n->(l n) c")
+                )
+                train_exog = rearrange(scaled_exog, "(l n) c -> l c n", l=train_data_l)
 
                 # Concatenate scaled data
                 train_data = np.concatenate([train_series, train_exog], axis=1)
         else:
             # Only series data, use scaler1
-            self.scaler1.fit(rearrange(train_data, 'l c n->(l n) c'))
+            self.scaler1.fit(rearrange(train_data, "l c n->(l n) c"))
             if config.norm:
-                scaled_data = self.scaler1.transform(rearrange(train_data, 'l c n->(l n) c'))
-                train_data = rearrange(scaled_data, '(l n) c -> l c n', l=train_data_l)
+                scaled_data = self.scaler1.transform(
+                    rearrange(train_data, "l c n->(l n) c")
+                )
+                train_data = rearrange(scaled_data, "(l n) c -> l c n", l=train_data_l)
 
         if train_ratio_in_tv != 1:
             if config.norm:
                 if exog_dim > 0:
                     # Scale validation series data
-                    scaled_series = self.scaler1.transform(rearrange(valid_data[:, :series_dim, :], 'l c n->(l n) c'))
-                    valid_series = rearrange(scaled_series, '(l n) c -> l c n', l=valid_data_l)
+                    scaled_series = self.scaler1.transform(
+                        rearrange(valid_data[:, :series_dim, :], "l c n->(l n) c")
+                    )
+                    valid_series = rearrange(
+                        scaled_series, "(l n) c -> l c n", l=valid_data_l
+                    )
 
                     # Scale validation exog data
-                    scaled_exog = self.scaler2.transform(rearrange(valid_data[:, series_dim:, :], 'l c n->(l n) c'))
-                    valid_exog = rearrange(scaled_exog, '(l n) c -> l c n', l=valid_data_l)
+                    scaled_exog = self.scaler2.transform(
+                        rearrange(valid_data[:, series_dim:, :], "l c n->(l n) c")
+                    )
+                    valid_exog = rearrange(
+                        scaled_exog, "(l n) c -> l c n", l=valid_data_l
+                    )
 
                     # Concatenate scaled data
                     valid_data = np.concatenate([valid_series, valid_exog], axis=1)
                 else:
-                    scaled_data = self.scaler1.transform(rearrange(valid_data, 'l c n->(l n) c'))
-                    valid_data = rearrange(scaled_data, '(l n) c -> l c n', l=valid_data_l)
+                    scaled_data = self.scaler1.transform(
+                        rearrange(valid_data, "l c n->(l n) c")
+                    )
+                    valid_data = rearrange(
+                        scaled_data, "(l n) c -> l c n", l=valid_data_l
+                    )
 
             valid_dataset, valid_data_loader = forecasting_data_provider(
                 valid_data,
@@ -336,10 +358,12 @@ class TimeKAN(ModelBase):
 
         # Mixed optimizer when using MLP
         if self.MLP is not None:
-            optimizer = optim.Adam([
-                {'params': self.model.parameters(), 'lr': config.lr},
-                {'params': self.MLP.parameters(), 'lr': config.lr * 0.1}
-            ])
+            optimizer = optim.Adam(
+                [
+                    {"params": self.model.parameters(), "lr": config.lr},
+                    {"params": self.MLP.parameters(), "lr": config.lr * 0.1},
+                ]
+            )
         else:
             optimizer = optim.Adam(self.model.parameters(), lr=config.lr)
 
@@ -350,7 +374,9 @@ class TimeKAN(ModelBase):
             p.numel() for p in self.model.parameters() if p.requires_grad
         )
         if self.MLP is not None:
-            total_params += sum(p.numel() for p in self.MLP.parameters() if p.requires_grad)
+            total_params += sum(
+                p.numel() for p in self.MLP.parameters() if p.requires_grad
+            )
 
         print(f"Total trainable parameters: {total_params}")
 
@@ -365,23 +391,25 @@ class TimeKAN(ModelBase):
                 input, target = input.to(self.device), target.to(self.device)
 
                 # decoder input
-                dec_input = torch.zeros_like(target[:, -config.horizon:, :]).float()
+                dec_input = torch.zeros_like(target[:, -config.horizon :, :]).float()
                 dec_input = (
                     torch.cat([target[:, : config.label_len, :], dec_input], dim=1)
                     .float()
                     .to(self.device)
                 )
 
-                exog_future = target[:, -config.horizon:, series_dim:].to(self.device)
+                exog_future = target[:, -config.horizon :, series_dim:].to(self.device)
                 output = self.model(input)
 
                 if self.config.use_mlp and self.MLP is not None:
-                    transformer_output = output[:, -config.horizon:, :series_dim]
-                    output = self.MLP(torch.cat((transformer_output, exog_future), dim=-1))
+                    transformer_output = output[:, -config.horizon :, :series_dim]
+                    output = self.MLP(
+                        torch.cat((transformer_output, exog_future), dim=-1)
+                    )
                 else:
-                    output = output[:, -config.horizon:, :series_dim]
+                    output = output[:, -config.horizon :, :series_dim]
 
-                target = target[:, -config.horizon:, :series_dim]
+                target = target[:, -config.horizon :, :series_dim]
                 loss = criterion(output, target)
 
                 loss.backward()
@@ -390,20 +418,22 @@ class TimeKAN(ModelBase):
             if train_ratio_in_tv != 1:
                 valid_loss = self.validate(valid_data_loader, series_dim, criterion)
                 if self.MLP is not None:
-                    self.early_stopping(valid_loss, {'transformer': self.model, 'mlp': self.MLP})
+                    self.early_stopping(
+                        valid_loss, {"transformer": self.model, "mlp": self.MLP}
+                    )
                 else:
-                    self.early_stopping(valid_loss, {'transformer': self.model})
+                    self.early_stopping(valid_loss, {"transformer": self.model})
                 if self.early_stopping.early_stop:
                     break
 
             adjust_learning_rate(optimizer, epoch + 1, config)
 
     def forecast(
-            self,
-            horizon: int,
-            series: np.ndarray,
-            *,
-            covariates: Optional[dict] = None,
+        self,
+        horizon: int,
+        series: np.ndarray,
+        *,
+        covariates: Optional[dict] = None,
     ) -> np.ndarray:
         """
         Make predictions.
@@ -426,8 +456,8 @@ class TimeKAN(ModelBase):
                 exog_data = exog_data[:, :, np.newaxis]
             series = np.concatenate([series, exog_data], axis=1)
             if (
-                    hasattr(self.config, "output_chunk_length")
-                    and horizon != self.config.output_chunk_length
+                hasattr(self.config, "output_chunk_length")
+                and horizon != self.config.output_chunk_length
             ):
                 raise ValueError(
                     f"Error: 'exog' is enabled during training, but horizon ({horizon}) != output_chunk_length ({self.config.output_chunk_length}) during forecast."
@@ -435,9 +465,11 @@ class TimeKAN(ModelBase):
 
         if self.early_stopping.check_point is not None:
             if isinstance(self.early_stopping.check_point, dict):
-                self.model.load_state_dict(self.early_stopping.check_point['transformer'])
-                if self.MLP is not None and 'mlp' in self.early_stopping.check_point:
-                    self.MLP.load_state_dict(self.early_stopping.check_point['mlp'])
+                self.model.load_state_dict(
+                    self.early_stopping.check_point["transformer"]
+                )
+                if self.MLP is not None and "mlp" in self.early_stopping.check_point:
+                    self.MLP.load_state_dict(self.early_stopping.check_point["mlp"])
             else:
                 # Backward compatibility
                 self.model.load_state_dict(self.early_stopping.check_point)
@@ -447,19 +479,25 @@ class TimeKAN(ModelBase):
             if exog_data is not None and series.shape[1] > series_dim:
                 # Scale series data with scaler1
                 series_data = series[:, :series_dim, :]
-                scaled_series = self.scaler1.transform(rearrange(series_data, 'l c n->(l n) c'))
-                scaled_series = rearrange(scaled_series, '(l n) c -> l c n', l=series_l)
+                scaled_series = self.scaler1.transform(
+                    rearrange(series_data, "l c n->(l n) c")
+                )
+                scaled_series = rearrange(scaled_series, "(l n) c -> l c n", l=series_l)
 
                 # Scale exog data with scaler2
                 exog_data = series[:, series_dim:, :]
-                scaled_exog = self.scaler2.transform(rearrange(exog_data, 'l c n->(l n) c'))
-                scaled_exog = rearrange(scaled_exog, '(l n) c -> l c n', l=series_l)
+                scaled_exog = self.scaler2.transform(
+                    rearrange(exog_data, "l c n->(l n) c")
+                )
+                scaled_exog = rearrange(scaled_exog, "(l n) c -> l c n", l=series_l)
 
                 # Combine scaled data
                 series = np.concatenate([scaled_series, scaled_exog], axis=1)
             else:
-                scaled_data = self.scaler1.transform(rearrange(series, 'l c n->(l n) c'))
-                series = rearrange(scaled_data, '(l n) c -> l c n', l=series_l)
+                scaled_data = self.scaler1.transform(
+                    rearrange(series, "l c n->(l n) c")
+                )
+                series = rearrange(scaled_data, "(l n) c -> l c n", l=series_l)
 
         if self.model is None:
             raise ValueError("Model not trained. Call the fit() function first.")
@@ -474,23 +512,31 @@ class TimeKAN(ModelBase):
 
         with torch.no_grad():
             predictions = []
-            current_input = series[-config.seq_len:, :, :]
+            current_input = series[-config.seq_len :, :, :]
 
             # Calculate number of prediction steps needed
             num_steps = math.ceil(horizon / config.horizon)
 
             for step in range(num_steps):
                 # Convert to tensor and predict
-                input_tensor = torch.tensor(current_input, dtype=torch.float32).unsqueeze(0).to(self.device)
+                input_tensor = (
+                    torch.tensor(current_input, dtype=torch.float32)
+                    .unsqueeze(0)
+                    .to(self.device)
+                )
 
                 # If 3D, need to handle batch dimension properly
                 if len(current_input.shape) == 3:
                     # Reshape to (batch, seq_len, features)
-                    input_tensor = rearrange(input_tensor, 'b l c n -> (b n) l c')
+                    input_tensor = rearrange(input_tensor, "b l c n -> (b n) l c")
 
                 output = self.model(input_tensor)
 
-                if self.config.use_mlp and self.MLP is not None and exog_data is not None:
+                if (
+                    self.config.use_mlp
+                    and self.MLP is not None
+                    and exog_data is not None
+                ):
                     # Extract future exogenous if available
                     start_idx = series.shape[0] + step * config.horizon
                     end_idx = min(start_idx + config.horizon, series.shape[0] + horizon)
@@ -499,14 +545,18 @@ class TimeKAN(ModelBase):
                         exog_future = covariates["exog_future"][start_idx:end_idx, :]
                         if len(exog_future.shape) == 2:
                             exog_future = exog_future[:, :, np.newaxis]
-                        exog_future_tensor = torch.tensor(exog_future, dtype=torch.float32).to(self.device)
+                        exog_future_tensor = torch.tensor(
+                            exog_future, dtype=torch.float32
+                        ).to(self.device)
 
-                        transformer_output = output[:, -config.horizon:, :series_dim]
-                        output = self.MLP(torch.cat((transformer_output, exog_future_tensor), dim=-1))
+                        transformer_output = output[:, -config.horizon :, :series_dim]
+                        output = self.MLP(
+                            torch.cat((transformer_output, exog_future_tensor), dim=-1)
+                        )
                     else:
-                        output = output[:, -config.horizon:, :series_dim]
+                        output = output[:, -config.horizon :, :series_dim]
                 else:
-                    output = output[:, -config.horizon:, :series_dim]
+                    output = output[:, -config.horizon :, :series_dim]
 
                 # Extract predictions
                 pred = output.cpu().numpy()
@@ -518,15 +568,14 @@ class TimeKAN(ModelBase):
                 if step < num_steps - 1:
                     # Shift and append predictions
                     if len(current_input.shape) == 3:
-                        current_input = np.concatenate([
-                            current_input[config.horizon:, :, :],
-                            pred[:, :, :]
-                        ], axis=0)
+                        current_input = np.concatenate(
+                            [current_input[config.horizon :, :, :], pred[:, :, :]],
+                            axis=0,
+                        )
                     else:
-                        current_input = np.concatenate([
-                            current_input[config.horizon:, :],
-                            pred
-                        ], axis=0)
+                        current_input = np.concatenate(
+                            [current_input[config.horizon :, :], pred], axis=0
+                        )
 
             # Concatenate all predictions
             all_predictions = np.concatenate(predictions, axis=0)[:horizon, :]
@@ -536,9 +585,11 @@ class TimeKAN(ModelBase):
                 pred_l = all_predictions.shape[0]
                 if len(all_predictions.shape) == 3:
                     scaled_data = self.scaler1.inverse_transform(
-                        rearrange(all_predictions[:, :series_dim, :], 'l c n->(l n) c')
+                        rearrange(all_predictions[:, :series_dim, :], "l c n->(l n) c")
                     )
-                    all_predictions = rearrange(scaled_data, '(l n) c -> l c n', l=pred_l)
+                    all_predictions = rearrange(
+                        scaled_data, "(l n) c -> l c n", l=pred_l
+                    )
                 else:
                     all_predictions = self.scaler1.inverse_transform(all_predictions)
 
@@ -549,7 +600,7 @@ class TimeKAN(ModelBase):
                 return all_predictions[:, :series_dim]
 
     def batch_forecast(
-            self, horizon: int, batch_maker: BatchMaker, exog_futures=None, i=0, **kwargs
+        self, horizon: int, batch_maker: BatchMaker, exog_futures=None, i=0, **kwargs
     ) -> np.ndarray:
         """
         Make predictions by batch.
@@ -562,9 +613,11 @@ class TimeKAN(ModelBase):
         """
         if self.early_stopping.check_point is not None:
             if isinstance(self.early_stopping.check_point, dict):
-                self.model.load_state_dict(self.early_stopping.check_point['transformer'])
-                if self.MLP is not None and 'mlp' in self.early_stopping.check_point:
-                    self.MLP.load_state_dict(self.early_stopping.check_point['mlp'])
+                self.model.load_state_dict(
+                    self.early_stopping.check_point["transformer"]
+                )
+                if self.MLP is not None and "mlp" in self.early_stopping.check_point:
+                    self.MLP.load_state_dict(self.early_stopping.check_point["mlp"])
             else:
                 # Backward compatibility
                 self.model.load_state_dict(self.early_stopping.check_point)
@@ -596,8 +649,8 @@ class TimeKAN(ModelBase):
                 exog_dim = exog_data.shape[-2]
                 input_np = np.concatenate((input_np, exog_data), axis=2)
                 if (
-                        hasattr(self.config, "output_chunk_length")
-                        and horizon != self.config.output_chunk_length
+                    hasattr(self.config, "output_chunk_length")
+                    and horizon != self.config.output_chunk_length
                 ):
                     raise ValueError(
                         f"Error: 'exog' is enabled during training, but horizon ({horizon}) != output_chunk_length ({self.config.output_chunk_length}) during forecast."
@@ -606,51 +659,69 @@ class TimeKAN(ModelBase):
                 exog_dim = 0
 
             # Reshape from 4D to 3D
-            input_np = rearrange(input_np, 'b l c n -> (b n) l c')
+            input_np = rearrange(input_np, "b l c n -> (b n) l c")
             input_np_b = input_np.shape[0]
 
             if self.config.norm:
                 if exog_dim > 0:
                     # Scale series data with scaler1
                     series_data = input_np[:, :, :series_dim]
-                    scaled_series = self.scaler1.transform(rearrange(series_data, 'b l c->(b l) c'))
-                    scaled_series = rearrange(scaled_series, '(b l) c -> b l c', b=input_np_b)
+                    scaled_series = self.scaler1.transform(
+                        rearrange(series_data, "b l c->(b l) c")
+                    )
+                    scaled_series = rearrange(
+                        scaled_series, "(b l) c -> b l c", b=input_np_b
+                    )
 
                     # Scale exog data with scaler2
                     exog_data = input_np[:, :, series_dim:]
-                    scaled_exog = self.scaler2.transform(rearrange(exog_data, 'b l c->(b l) c'))
-                    scaled_exog = rearrange(scaled_exog, '(b l) c -> b l c', b=input_np_b)
+                    scaled_exog = self.scaler2.transform(
+                        rearrange(exog_data, "b l c->(b l) c")
+                    )
+                    scaled_exog = rearrange(
+                        scaled_exog, "(b l) c -> b l c", b=input_np_b
+                    )
 
                     # Combine scaled data
                     input_np = np.concatenate([scaled_series, scaled_exog], axis=2)
                 else:
-                    scaled_data = self.scaler1.transform(rearrange(input_np, 'b l c->(b l) c'))
-                    input_np = rearrange(scaled_data, '(b l) c -> b l c', b=input_np_b)
+                    scaled_data = self.scaler1.transform(
+                        rearrange(input_np, "b l c->(b l) c")
+                    )
+                    input_np = rearrange(scaled_data, "(b l) c -> b l c", b=input_np_b)
 
             if exog_futures is not None and exog_dim > 0:
                 exog_future = torch.tensor(
-                    exog_futures[i * real_batch_size: (i + 1) * real_batch_size, -horizon:, :]
+                    exog_futures[
+                        i * real_batch_size : (i + 1) * real_batch_size, -horizon:, :
+                    ]
                 ).to(self.device)
 
                 if self.config.norm:
                     exog_future_np = exog_future.cpu().numpy()
                     exog_future_b = exog_future_np.shape[0]
-                    scaled_exog_future = self.scaler2.transform(rearrange(exog_future_np, 'b l c->(b l) c'))
-                    scaled_exog_future = rearrange(scaled_exog_future, '(b l) c -> b l c', b=exog_future_b)
+                    scaled_exog_future = self.scaler2.transform(
+                        rearrange(exog_future_np, "b l c->(b l) c")
+                    )
+                    scaled_exog_future = rearrange(
+                        scaled_exog_future, "(b l) c -> b l c", b=exog_future_b
+                    )
                     exog_future = torch.tensor(scaled_exog_future).to(self.device)
             else:
                 exog_future = None
 
-            answers = self._perform_rolling_predictions(horizon, input_np, exog_future, series_dim)
+            answers = self._perform_rolling_predictions(
+                horizon, input_np, exog_future, series_dim
+            )
             answers = torch.tensor(answers)[:, -horizon:, :series_dim]
 
             if self.config.norm:
                 # Only inverse transform series data with scaler1
                 answers_b = answers.shape[0]
                 scaled_data = self.scaler1.inverse_transform(
-                    rearrange(answers.cpu().detach().numpy(), 'b l c->(b l) c')
+                    rearrange(answers.cpu().detach().numpy(), "b l c->(b l) c")
                 )
-                answers = rearrange(scaled_data, '(b l) c -> b l c', b=answers_b)
+                answers = rearrange(scaled_data, "(b l) c -> b l c", b=answers_b)
 
             return answers
         else:
@@ -658,7 +729,9 @@ class TimeKAN(ModelBase):
             if len(input_np.shape) == 2:
                 input_np = input_np[:, :, np.newaxis]
 
-            series_dim = input_np.shape[-2] if len(input_np.shape) == 3 else input_np.shape[-1]
+            series_dim = (
+                input_np.shape[-2] if len(input_np.shape) == 3 else input_np.shape[-1]
+            )
 
             if input_data["covariates"] is None:
                 covariates = {}
@@ -671,8 +744,8 @@ class TimeKAN(ModelBase):
                     exog_data = exog_data[:, :, np.newaxis]
                 input_np = np.concatenate((input_np, exog_data), axis=1)
                 if (
-                        hasattr(self.config, "output_chunk_length")
-                        and horizon != self.config.output_chunk_length
+                    hasattr(self.config, "output_chunk_length")
+                    and horizon != self.config.output_chunk_length
                 ):
                     raise ValueError(
                         f"Error: 'exog' is enabled during training, but horizon ({horizon}) != output_chunk_length ({self.config.output_chunk_length}) during forecast."
@@ -684,26 +757,38 @@ class TimeKAN(ModelBase):
                 channels = input_np.shape[2]
 
                 # Reshape for scaler
-                flattened = rearrange(input_np, 'b l c -> (b l) c')
+                flattened = rearrange(input_np, "b l c -> (b l) c")
                 scaled = self.scaler1.transform(flattened)
-                input_np = rearrange(scaled, '(b l) c -> b l c', b=batch_size)
+                input_np = rearrange(scaled, "(b l) c -> b l c", b=batch_size)
 
             # Simplified batch prediction
             with torch.no_grad():
                 predictions = []
 
                 for batch_idx in range(input_np.shape[0]):
-                    batch_input = input_np[batch_idx:batch_idx + 1]
-                    input_tensor = torch.tensor(batch_input, dtype=torch.float32).to(self.device)
+                    batch_input = input_np[batch_idx : batch_idx + 1]
+                    input_tensor = torch.tensor(batch_input, dtype=torch.float32).to(
+                        self.device
+                    )
 
                     output = self.model(input_tensor)
 
-                    if self.config.use_mlp and self.MLP is not None and exog_futures is not None:
+                    if (
+                        self.config.use_mlp
+                        and self.MLP is not None
+                        and exog_futures is not None
+                    ):
                         exog_future = exog_futures[batch_idx, -horizon:, :]
-                        exog_future_tensor = torch.tensor(exog_future, dtype=torch.float32).unsqueeze(0).to(self.device)
+                        exog_future_tensor = (
+                            torch.tensor(exog_future, dtype=torch.float32)
+                            .unsqueeze(0)
+                            .to(self.device)
+                        )
 
                         transformer_output = output[:, -horizon:, :series_dim]
-                        output = self.MLP(torch.cat((transformer_output, exog_future_tensor), dim=-1))
+                        output = self.MLP(
+                            torch.cat((transformer_output, exog_future_tensor), dim=-1)
+                        )
                     else:
                         output = output[:, -horizon:, :series_dim]
 
@@ -714,9 +799,9 @@ class TimeKAN(ModelBase):
                 if self.config.norm:
                     # Reshape and inverse transform
                     batch_size = answers.shape[0]
-                    flattened = rearrange(answers, 'b l c -> (b l) c')
+                    flattened = rearrange(answers, "b l c -> (b l) c")
                     scaled = self.scaler1.inverse_transform(flattened)
-                    answers = rearrange(scaled, '(b l) c -> b l c', b=batch_size)
+                    answers = rearrange(scaled, "(b l) c -> b l c", b=batch_size)
 
                 # Return only series dimensions
                 if len(answers.shape) == 3 and answers.shape[2] == 1:
@@ -725,7 +810,11 @@ class TimeKAN(ModelBase):
                     return answers[:, :, :series_dim]
 
     def _perform_rolling_predictions(
-            self, horizon: int, input_np: np.ndarray, exog_future: torch.Tensor, series_dim: int
+        self,
+        horizon: int,
+        input_np: np.ndarray,
+        exog_future: torch.Tensor,
+        series_dim: int,
     ) -> np.ndarray:
         """
         Perform rolling predictions for 3D data.
@@ -735,12 +824,25 @@ class TimeKAN(ModelBase):
 
         with torch.no_grad():
             while not answers or sum(a.shape[1] for a in answers) < horizon:
-                input_tensor = torch.tensor(input_np, dtype=torch.float32).to(self.device)
+                input_tensor = torch.tensor(input_np, dtype=torch.float32).to(
+                    self.device
+                )
                 output = self.model(input_tensor)
 
-                if self.config.use_mlp and self.MLP is not None and exog_future is not None:
-                    output = torch.tensor(output[:, -horizon:, :series_dim]).to(self.device)
-                    output = self.MLP(torch.cat((output.to(torch.float32), exog_future.to(torch.float32)), dim=-1))
+                if (
+                    self.config.use_mlp
+                    and self.MLP is not None
+                    and exog_future is not None
+                ):
+                    output = torch.tensor(output[:, -horizon:, :series_dim]).to(
+                        self.device
+                    )
+                    output = self.MLP(
+                        torch.cat(
+                            (output.to(torch.float32), exog_future.to(torch.float32)),
+                            dim=-1,
+                        )
+                    )
                 else:
                     output = output[:, -horizon:, :series_dim]
 
@@ -749,28 +851,30 @@ class TimeKAN(ModelBase):
                 answer = (
                     output.cpu()
                     .numpy()
-                    .reshape(real_batch_size, -1, column_num)[:, -self.config.horizon:, :]
+                    .reshape(real_batch_size, -1, column_num)[
+                        :, -self.config.horizon :, :
+                    ]
                 )
                 answers.append(answer)
                 if sum(a.shape[1] for a in answers) >= horizon:
                     break
                 rolling_time += 1
-                output = output.cpu().numpy()[:, -self.config.horizon:, :]
+                output = output.cpu().numpy()[:, -self.config.horizon :, :]
                 input_np = self._get_rolling_data_3d(input_np, output, rolling_time)
 
         answers = np.concatenate(answers, axis=1)
         return answers[:, -horizon:, :]
 
     def _get_rolling_data_3d(
-            self,
-            input_np: np.ndarray,
-            output: Optional[np.ndarray],
-            rolling_time: int,
+        self,
+        input_np: np.ndarray,
+        output: Optional[np.ndarray],
+        rolling_time: int,
     ) -> np.ndarray:
         """
         Prepare rolling data for 3D input.
         """
         if rolling_time > 0:
             input_np = np.concatenate((input_np, output), axis=1)
-            input_np = input_np[:, -self.config.seq_len:, :]
+            input_np = input_np[:, -self.config.seq_len :, :]
         return input_np

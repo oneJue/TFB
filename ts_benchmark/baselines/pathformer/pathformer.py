@@ -162,7 +162,7 @@ class Pathformer(ModelBase):
         self.config.label_len = 48
 
     def validate(
-            self, valid_data_loader: DataLoader, series_dim: int, criterion: torch.nn.Module
+        self, valid_data_loader: DataLoader, series_dim: int, criterion: torch.nn.Module
     ) -> float:
         """
         Validates the model performance on the provided validation dataset.
@@ -183,23 +183,23 @@ class Pathformer(ModelBase):
                 target.to(self.device),
             )
             # decoder input
-            dec_input = torch.zeros_like(target[:, -config.horizon:, :]).float()
+            dec_input = torch.zeros_like(target[:, -config.horizon :, :]).float()
             dec_input = (
                 torch.cat([target[:, : config.label_len, :], dec_input], dim=1)
                 .float()
                 .to(self.device)
             )
 
-            exog_future = target[:, -config.horizon:, series_dim:].to(self.device)
+            exog_future = target[:, -config.horizon :, series_dim:].to(self.device)
             output, balance_loss = self.model(input)
 
             if self.config.use_mlp and self.MLP is not None:
-                transformer_output = output[:, -config.horizon:, :series_dim]
+                transformer_output = output[:, -config.horizon :, :series_dim]
                 output = self.MLP(torch.cat((transformer_output, exog_future), dim=-1))
             else:
-                output = output[:, -config.horizon:, :series_dim]
+                output = output[:, -config.horizon :, :series_dim]
 
-            target = target[:, -config.horizon:, :series_dim]
+            target = target[:, -config.horizon :, :series_dim]
             loss = criterion(output, target).detach().cpu().numpy()
             total_loss.append(loss)
 
@@ -210,12 +210,12 @@ class Pathformer(ModelBase):
         return total_loss
 
     def forecast_fit(
-            self,
-            train_valid_data: np.ndarray,
-            *,
-            covariates: Optional[dict] = None,
-            train_ratio_in_tv: float = 1.0,
-            **kwargs,
+        self,
+        train_valid_data: np.ndarray,
+        *,
+        covariates: Optional[dict] = None,
+        train_ratio_in_tv: float = 1.0,
+        **kwargs,
     ) -> "ModelBase":
         """
         Train the model.
@@ -248,7 +248,9 @@ class Pathformer(ModelBase):
         if self.config.use_mlp:
             input_size = series_dim + exog_dim
             output_size = series_dim
-            self.MLP = MLP(input_size=input_size, hidden_size1=2048, output_size=output_size)
+            self.MLP = MLP(
+                input_size=input_size, hidden_size1=2048, output_size=output_size
+            )
             self.MLP.to(self.device)
         else:
             self.MLP = None
@@ -267,44 +269,64 @@ class Pathformer(ModelBase):
         # Fit scalers based on whether we have exog data
         if exog_dim > 0:
             # Fit scaler1 for series data
-            self.scaler1.fit(rearrange(train_data[:, :series_dim, :], 'l c n->(l n) c'))
+            self.scaler1.fit(rearrange(train_data[:, :series_dim, :], "l c n->(l n) c"))
             # Fit scaler2 for exog data
-            self.scaler2.fit(rearrange(train_data[:, series_dim:, :], 'l c n->(l n) c'))
+            self.scaler2.fit(rearrange(train_data[:, series_dim:, :], "l c n->(l n) c"))
 
             if config.norm:
                 # Scale series data
-                scaled_series = self.scaler1.transform(rearrange(train_data[:, :series_dim, :], 'l c n->(l n) c'))
-                train_series = rearrange(scaled_series, '(l n) c -> l c n', l=train_data_l)
+                scaled_series = self.scaler1.transform(
+                    rearrange(train_data[:, :series_dim, :], "l c n->(l n) c")
+                )
+                train_series = rearrange(
+                    scaled_series, "(l n) c -> l c n", l=train_data_l
+                )
 
                 # Scale exog data
-                scaled_exog = self.scaler2.transform(rearrange(train_data[:, series_dim:, :], 'l c n->(l n) c'))
-                train_exog = rearrange(scaled_exog, '(l n) c -> l c n', l=train_data_l)
+                scaled_exog = self.scaler2.transform(
+                    rearrange(train_data[:, series_dim:, :], "l c n->(l n) c")
+                )
+                train_exog = rearrange(scaled_exog, "(l n) c -> l c n", l=train_data_l)
 
                 # Concatenate scaled data
                 train_data = np.concatenate([train_series, train_exog], axis=1)
         else:
             # Only series data, use scaler1
-            self.scaler1.fit(rearrange(train_data, 'l c n->(l n) c'))
+            self.scaler1.fit(rearrange(train_data, "l c n->(l n) c"))
             if config.norm:
-                scaled_data = self.scaler1.transform(rearrange(train_data, 'l c n->(l n) c'))
-                train_data = rearrange(scaled_data, '(l n) c -> l c n', l=train_data_l)
+                scaled_data = self.scaler1.transform(
+                    rearrange(train_data, "l c n->(l n) c")
+                )
+                train_data = rearrange(scaled_data, "(l n) c -> l c n", l=train_data_l)
 
         if train_ratio_in_tv != 1:
             if config.norm:
                 if exog_dim > 0:
                     # Scale validation series data
-                    scaled_series = self.scaler1.transform(rearrange(valid_data[:, :series_dim, :], 'l c n->(l n) c'))
-                    valid_series = rearrange(scaled_series, '(l n) c -> l c n', l=valid_data_l)
+                    scaled_series = self.scaler1.transform(
+                        rearrange(valid_data[:, :series_dim, :], "l c n->(l n) c")
+                    )
+                    valid_series = rearrange(
+                        scaled_series, "(l n) c -> l c n", l=valid_data_l
+                    )
 
                     # Scale validation exog data
-                    scaled_exog = self.scaler2.transform(rearrange(valid_data[:, series_dim:, :], 'l c n->(l n) c'))
-                    valid_exog = rearrange(scaled_exog, '(l n) c -> l c n', l=valid_data_l)
+                    scaled_exog = self.scaler2.transform(
+                        rearrange(valid_data[:, series_dim:, :], "l c n->(l n) c")
+                    )
+                    valid_exog = rearrange(
+                        scaled_exog, "(l n) c -> l c n", l=valid_data_l
+                    )
 
                     # Concatenate scaled data
                     valid_data = np.concatenate([valid_series, valid_exog], axis=1)
                 else:
-                    scaled_data = self.scaler1.transform(rearrange(valid_data, 'l c n->(l n) c'))
-                    valid_data = rearrange(scaled_data, '(l n) c -> l c n', l=valid_data_l)
+                    scaled_data = self.scaler1.transform(
+                        rearrange(valid_data, "l c n->(l n) c")
+                    )
+                    valid_data = rearrange(
+                        scaled_data, "(l n) c -> l c n", l=valid_data_l
+                    )
             valid_dataset, valid_data_loader = forecasting_data_provider(
                 valid_data,
                 config,
@@ -333,10 +355,12 @@ class Pathformer(ModelBase):
 
         # Configure optimizer based on whether MLP is used
         if self.MLP is not None:
-            optimizer = optim.Adam([
-                {'params': self.model.parameters(), 'lr': config.learning_rate},
-                {'params': self.MLP.parameters(), 'lr': config.learning_rate * 0.1}
-            ])
+            optimizer = optim.Adam(
+                [
+                    {"params": self.model.parameters(), "lr": config.learning_rate},
+                    {"params": self.MLP.parameters(), "lr": config.learning_rate * 0.1},
+                ]
+            )
         else:
             optimizer = optim.Adam(self.model.parameters(), lr=config.learning_rate)
 
@@ -347,7 +371,9 @@ class Pathformer(ModelBase):
             p.numel() for p in self.model.parameters() if p.requires_grad
         )
         if self.MLP is not None:
-            total_params += sum(p.numel() for p in self.MLP.parameters() if p.requires_grad)
+            total_params += sum(
+                p.numel() for p in self.MLP.parameters() if p.requires_grad
+            )
 
         print(f"Total trainable parameters: {total_params}")
         train_steps = len(train_data_loader)
@@ -371,23 +397,25 @@ class Pathformer(ModelBase):
                     target.to(self.device),
                 )
                 # decoder input
-                dec_input = torch.zeros_like(target[:, -config.horizon:, :]).float()
+                dec_input = torch.zeros_like(target[:, -config.horizon :, :]).float()
                 dec_input = (
                     torch.cat([target[:, : config.label_len, :], dec_input], dim=1)
                     .float()
                     .to(self.device)
                 )
 
-                exog_future = target[:, -config.horizon:, series_dim:].to(self.device)
+                exog_future = target[:, -config.horizon :, series_dim:].to(self.device)
                 output, balance_loss = self.model(input)
 
                 if self.config.use_mlp and self.MLP is not None:
-                    transformer_output = output[:, -config.horizon:, :series_dim]
-                    output = self.MLP(torch.cat((transformer_output, exog_future), dim=-1))
+                    transformer_output = output[:, -config.horizon :, :series_dim]
+                    output = self.MLP(
+                        torch.cat((transformer_output, exog_future), dim=-1)
+                    )
                 else:
-                    output = output[:, -config.horizon:, :series_dim]
+                    output = output[:, -config.horizon :, :series_dim]
 
-                target = target[:, -config.horizon:, :series_dim]
+                target = target[:, -config.horizon :, :series_dim]
                 loss = criterion(output, target)
 
                 loss.backward()
@@ -402,20 +430,22 @@ class Pathformer(ModelBase):
             if train_ratio_in_tv != 1:
                 valid_loss = self.validate(valid_data_loader, series_dim, criterion)
                 if self.MLP is not None:
-                    self.early_stopping(valid_loss, {'transformer': self.model, 'mlp': self.MLP})
+                    self.early_stopping(
+                        valid_loss, {"transformer": self.model, "mlp": self.MLP}
+                    )
                 else:
-                    self.early_stopping(valid_loss, {'transformer': self.model})
+                    self.early_stopping(valid_loss, {"transformer": self.model})
                 if self.early_stopping.early_stop:
                     break
             if config.lradj != "TST":
                 adjust_learning_rate(optimizer, scheduler, epoch + 1, config)
 
     def forecast(
-            self,
-            horizon: int,
-            series: np.ndarray,
-            *,
-            covariates: Optional[dict] = None,
+        self,
+        horizon: int,
+        series: np.ndarray,
+        *,
+        covariates: Optional[dict] = None,
     ) -> np.ndarray:
         """
         Make predictions.
@@ -431,8 +461,8 @@ class Pathformer(ModelBase):
         if exog_data is not None:
             series = np.concatenate([series, exog_data], axis=1)
             if (
-                    hasattr(self.config, "output_chunk_length")
-                    and horizon != self.config.output_chunk_length
+                hasattr(self.config, "output_chunk_length")
+                and horizon != self.config.output_chunk_length
             ):
                 raise ValueError(
                     f"Error: 'exog' is enabled during training, but horizon ({horizon}) != output_chunk_length ({self.config.output_chunk_length}) during forecast."
@@ -440,9 +470,11 @@ class Pathformer(ModelBase):
 
         if self.early_stopping.check_point is not None:
             if isinstance(self.early_stopping.check_point, dict):
-                self.model.load_state_dict(self.early_stopping.check_point['transformer'])
-                if self.MLP is not None and 'mlp' in self.early_stopping.check_point:
-                    self.MLP.load_state_dict(self.early_stopping.check_point['mlp'])
+                self.model.load_state_dict(
+                    self.early_stopping.check_point["transformer"]
+                )
+                if self.MLP is not None and "mlp" in self.early_stopping.check_point:
+                    self.MLP.load_state_dict(self.early_stopping.check_point["mlp"])
             else:
                 # Backward compatibility
                 self.model.load_state_dict(self.early_stopping.check_point)
@@ -468,7 +500,7 @@ class Pathformer(ModelBase):
         config = self.config
         # For numpy arrays, we need to handle the time splitting differently
         # Assuming series has shape (time_steps, features)
-        test = series[-config.seq_len:, :]
+        test = series[-config.seq_len :, :]
 
         # Pad test data for forecast
         test = self._padding_data_for_forecast_numpy(test)
@@ -492,7 +524,7 @@ class Pathformer(ModelBase):
                         target.to(self.device),
                     )
                     dec_input = torch.zeros_like(
-                        target[:, -config.horizon:, :]
+                        target[:, -config.horizon :, :]
                     ).float()
                     dec_input = (
                         torch.cat([target[:, : config.label_len, :], dec_input], dim=1)
@@ -500,17 +532,19 @@ class Pathformer(ModelBase):
                         .to(self.device)
                     )
 
-                    exog_future = target[:, -config.horizon:, series_dim:]
+                    exog_future = target[:, -config.horizon :, series_dim:]
                     output, balance_loss = self.model(input)
 
                     if self.config.use_mlp and self.MLP is not None:
-                        transformer_output = output[:, -config.horizon:, :series_dim]
-                        output = self.MLP(torch.cat((transformer_output, exog_future), dim=-1))
+                        transformer_output = output[:, -config.horizon :, :series_dim]
+                        output = self.MLP(
+                            torch.cat((transformer_output, exog_future), dim=-1)
+                        )
                     else:
-                        output = output[:, -config.horizon:, :series_dim]
+                        output = output[:, -config.horizon :, :series_dim]
 
                 column_num = output.shape[-1]
-                temp = output.cpu().numpy().reshape(-1, column_num)[-config.horizon:]
+                temp = output.cpu().numpy().reshape(-1, column_num)[-config.horizon :]
 
                 if answer is None:
                     answer = temp
@@ -525,11 +559,11 @@ class Pathformer(ModelBase):
                         )
                     return answer[-horizon:, :series_dim]
 
-                output = output.cpu().numpy()[:, -config.horizon:]
+                output = output.cpu().numpy()[:, -config.horizon :]
                 for i in range(config.horizon):
                     test[i + config.seq_len] = output[0, i, :]
 
-                test = test[config.horizon:]
+                test = test[config.horizon :]
                 test = self._padding_data_for_forecast_numpy(test)
 
                 test_data_set, test_data_loader = forecasting_data_provider(
@@ -542,7 +576,7 @@ class Pathformer(ModelBase):
                 )
 
     def batch_forecast(
-            self, horizon: int, batch_maker: BatchMaker, **kwargs
+        self, horizon: int, batch_maker: BatchMaker, **kwargs
     ) -> np.ndarray:
         """
         Make predictions by batch.
@@ -553,9 +587,11 @@ class Pathformer(ModelBase):
         """
         if self.early_stopping.check_point is not None:
             if isinstance(self.early_stopping.check_point, dict):
-                self.model.load_state_dict(self.early_stopping.check_point['transformer'])
-                if self.MLP is not None and 'mlp' in self.early_stopping.check_point:
-                    self.MLP.load_state_dict(self.early_stopping.check_point['mlp'])
+                self.model.load_state_dict(
+                    self.early_stopping.check_point["transformer"]
+                )
+                if self.MLP is not None and "mlp" in self.early_stopping.check_point:
+                    self.MLP.load_state_dict(self.early_stopping.check_point["mlp"])
             else:
                 # Backward compatibility
                 self.model.load_state_dict(self.early_stopping.check_point)
@@ -585,68 +621,86 @@ class Pathformer(ModelBase):
             exog_dim = exog_data.shape[-2]
             input_np = np.concatenate((input_np, exog_data), axis=2)
             if (
-                    hasattr(self.config, "output_chunk_length")
-                    and horizon != self.config.output_chunk_length
+                hasattr(self.config, "output_chunk_length")
+                and horizon != self.config.output_chunk_length
             ):
                 raise ValueError(
                     f"Error: 'exog' is enabled during training, but horizon ({horizon}) != output_chunk_length ({self.config.output_chunk_length}) during forecast."
                 )
 
         # Reshape input to match expected format
-        input_np = rearrange(input_np, 'b l c n -> (b n) l c')
+        input_np = rearrange(input_np, "b l c n -> (b n) l c")
         input_np_b = input_np.shape[0]
 
         if self.config.norm:
             if exog_dim > 0:
                 # Scale series data with scaler1
                 series_data = input_np[:, :, :series_dim]
-                scaled_series = self.scaler1.transform(rearrange(series_data, 'b l c->(b l) c'))
-                scaled_series = rearrange(scaled_series, '(b l) c -> b l c', b=input_np_b)
+                scaled_series = self.scaler1.transform(
+                    rearrange(series_data, "b l c->(b l) c")
+                )
+                scaled_series = rearrange(
+                    scaled_series, "(b l) c -> b l c", b=input_np_b
+                )
 
                 # Scale exog data with scaler2
                 exog_data = input_np[:, :, series_dim:]
-                scaled_exog = self.scaler2.transform(rearrange(exog_data, 'b l c->(b l) c'))
-                scaled_exog = rearrange(scaled_exog, '(b l) c -> b l c', b=input_np_b)
+                scaled_exog = self.scaler2.transform(
+                    rearrange(exog_data, "b l c->(b l) c")
+                )
+                scaled_exog = rearrange(scaled_exog, "(b l) c -> b l c", b=input_np_b)
 
                 # Combine scaled data
                 input_np = np.concatenate([scaled_series, scaled_exog], axis=2)
             else:
-                scaled_data = self.scaler1.transform(rearrange(input_np, 'b l c->(b l) c'))
-                input_np = rearrange(scaled_data, '(b l) c -> b l c', b=input_np_b)
+                scaled_data = self.scaler1.transform(
+                    rearrange(input_np, "b l c->(b l) c")
+                )
+                input_np = rearrange(scaled_data, "(b l) c -> b l c", b=input_np_b)
 
         # Get exog future data if available
         exog_future = None
-        if 'exog_futures' in kwargs and exog_dim > 0:
-            exog_futures = kwargs['exog_futures']
-            i = kwargs.get('i', 0)
+        if "exog_futures" in kwargs and exog_dim > 0:
+            exog_futures = kwargs["exog_futures"]
+            i = kwargs.get("i", 0)
             exog_future = torch.tensor(
-                exog_futures[i * real_batch_size: (i + 1) * real_batch_size, -horizon:, :]
+                exog_futures[
+                    i * real_batch_size : (i + 1) * real_batch_size, -horizon:, :
+                ]
             ).to(self.device)
 
             if self.config.norm:
                 exog_future_np = exog_future.cpu().numpy()
                 exog_future_b = exog_future_np.shape[0]
-                scaled_exog_future = self.scaler2.transform(rearrange(exog_future_np, 'b l c->(b l) c'))
-                scaled_exog_future = rearrange(scaled_exog_future, '(b l) c -> b l c', b=exog_future_b)
+                scaled_exog_future = self.scaler2.transform(
+                    rearrange(exog_future_np, "b l c->(b l) c")
+                )
+                scaled_exog_future = rearrange(
+                    scaled_exog_future, "(b l) c -> b l c", b=exog_future_b
+                )
                 exog_future = torch.tensor(scaled_exog_future).to(self.device)
 
         # Simplified rolling predictions
-        answers = self._perform_rolling_predictions(horizon, input_np, exog_future, series_dim)
+        answers = self._perform_rolling_predictions(
+            horizon, input_np, exog_future, series_dim
+        )
 
         if self.config.norm:
             # Only inverse transform series data with scaler1
             answers_b = answers.shape[0]
-            scaled_data = self.scaler1.inverse_transform(rearrange(answers, 'b l c->(b l) c'))
-            answers = rearrange(scaled_data, '(b l) c -> b l c', b=answers_b)
+            scaled_data = self.scaler1.inverse_transform(
+                rearrange(answers, "b l c->(b l) c")
+            )
+            answers = rearrange(scaled_data, "(b l) c -> b l c", b=answers_b)
 
         return answers[..., :series_dim]
 
     def _perform_rolling_predictions(
-            self,
-            horizon: int,
-            input_np: np.ndarray,
-            exog_future: Optional[torch.Tensor],
-            series_dim: int,
+        self,
+        horizon: int,
+        input_np: np.ndarray,
+        exog_future: Optional[torch.Tensor],
+        series_dim: int,
     ) -> np.ndarray:
         """
         Perform rolling predictions using the given input data.
@@ -664,20 +718,33 @@ class Pathformer(ModelBase):
                 input = torch.tensor(input_np, dtype=torch.float32).to(self.device)
                 output, balance_loss = self.model(input)
 
-                if self.config.use_mlp and self.MLP is not None and exog_future is not None:
-                    transformer_output = output[:, -self.config.horizon:, :series_dim]
-                    current_exog = exog_future[:,
-                                   rolling_time * self.config.horizon:(rolling_time + 1) * self.config.horizon, :]
-                    output = self.MLP(torch.cat((transformer_output, current_exog), dim=-1))
+                if (
+                    self.config.use_mlp
+                    and self.MLP is not None
+                    and exog_future is not None
+                ):
+                    transformer_output = output[:, -self.config.horizon :, :series_dim]
+                    current_exog = exog_future[
+                        :,
+                        rolling_time
+                        * self.config.horizon : (rolling_time + 1)
+                        * self.config.horizon,
+                        :,
+                    ]
+                    output = self.MLP(
+                        torch.cat((transformer_output, current_exog), dim=-1)
+                    )
                 else:
-                    output = output[:, -self.config.horizon:, :series_dim]
+                    output = output[:, -self.config.horizon :, :series_dim]
 
                 column_num = output.shape[-1]
                 real_batch_size = output.shape[0]
                 answer = (
                     output.cpu()
                     .numpy()
-                    .reshape(real_batch_size, -1, column_num)[:, -self.config.horizon:, :]
+                    .reshape(real_batch_size, -1, column_num)[
+                        :, -self.config.horizon :, :
+                    ]
                 )
                 answers.append(answer)
 
@@ -685,16 +752,18 @@ class Pathformer(ModelBase):
                     break
 
                 rolling_time += 1
-                output_np = output.cpu().numpy()[:, -self.config.horizon:, :]
+                output_np = output.cpu().numpy()[:, -self.config.horizon :, :]
 
                 # Pad output to match input dimensions if needed
                 if output_np.shape[-1] < input_np.shape[-1]:
                     padding_size = input_np.shape[-1] - output_np.shape[-1]
-                    padding = np.zeros((output_np.shape[0], output_np.shape[1], padding_size))
+                    padding = np.zeros(
+                        (output_np.shape[0], output_np.shape[1], padding_size)
+                    )
                     output_np = np.concatenate((output_np, padding), axis=-1)
 
                 input_np = np.concatenate((input_np, output_np), axis=1)
-                input_np = input_np[:, -self.config.seq_len:, :]
+                input_np = input_np[:, -self.config.seq_len :, :]
 
         answers = np.concatenate(answers, axis=1)
         return answers[:, -horizon:, :]

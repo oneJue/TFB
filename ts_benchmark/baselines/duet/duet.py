@@ -151,7 +151,7 @@ class DUET(ModelBase):
         self.config.label_len = 48
 
     def validate(
-            self, valid_data_loader: DataLoader, series_dim: int, criterion: torch.nn.Module
+        self, valid_data_loader: DataLoader, series_dim: int, criterion: torch.nn.Module
     ) -> float:
         """
         Validates the model performance on the provided validation dataset.
@@ -170,17 +170,19 @@ class DUET(ModelBase):
                 )
 
                 # Extract exog_future from target if exists
-                exog_future = target[:, -config.horizon:, series_dim:].to(self.device)
+                exog_future = target[:, -config.horizon :, series_dim:].to(self.device)
 
                 output, _ = self.model(input)
 
                 if self.config.use_mlp and self.MLP is not None:
-                    transformer_output = output[:, -config.horizon:, :series_dim]
-                    output = self.MLP(torch.cat((transformer_output, exog_future), dim=-1))
+                    transformer_output = output[:, -config.horizon :, :series_dim]
+                    output = self.MLP(
+                        torch.cat((transformer_output, exog_future), dim=-1)
+                    )
                 else:
-                    output = output[:, -config.horizon:, :series_dim]
+                    output = output[:, -config.horizon :, :series_dim]
 
-                target = target[:, -config.horizon:, :series_dim]
+                target = target[:, -config.horizon :, :series_dim]
                 loss = criterion(output, target).detach().cpu().numpy()
                 total_loss.append(loss)
 
@@ -191,12 +193,12 @@ class DUET(ModelBase):
         return total_loss
 
     def forecast_fit(
-            self,
-            train_valid_data: np.ndarray,
-            *,
-            covariates: Optional[dict] = None,
-            train_ratio_in_tv: float = 1.0,
-            **kwargs,
+        self,
+        train_valid_data: np.ndarray,
+        *,
+        covariates: Optional[dict] = None,
+        train_ratio_in_tv: float = 1.0,
+        **kwargs,
     ) -> "ModelBase":
         """
         Train the model.
@@ -224,7 +226,9 @@ class DUET(ModelBase):
         if self.config.use_mlp:
             input_size = series_dim + exog_dim
             output_size = series_dim
-            self.MLP = MLP(input_size=input_size, hidden_size1=2048, output_size=output_size)
+            self.MLP = MLP(
+                input_size=input_size, hidden_size1=2048, output_size=output_size
+            )
             self.MLP.to(self.device)
         else:
             self.MLP = None
@@ -243,44 +247,64 @@ class DUET(ModelBase):
         # Fit scalers
         if exog_dim > 0:
             # Fit scaler1 for series data
-            self.scaler1.fit(rearrange(train_data[:, :series_dim, :], 'l c n->(l n) c'))
+            self.scaler1.fit(rearrange(train_data[:, :series_dim, :], "l c n->(l n) c"))
             # Fit scaler2 for exog data
-            self.scaler2.fit(rearrange(train_data[:, series_dim:, :], 'l c n->(l n) c'))
+            self.scaler2.fit(rearrange(train_data[:, series_dim:, :], "l c n->(l n) c"))
 
             if config.norm:
                 # Scale series data
-                scaled_series = self.scaler1.transform(rearrange(train_data[:, :series_dim, :], 'l c n->(l n) c'))
-                train_series = rearrange(scaled_series, '(l n) c -> l c n', l=train_data_l)
+                scaled_series = self.scaler1.transform(
+                    rearrange(train_data[:, :series_dim, :], "l c n->(l n) c")
+                )
+                train_series = rearrange(
+                    scaled_series, "(l n) c -> l c n", l=train_data_l
+                )
 
                 # Scale exog data
-                scaled_exog = self.scaler2.transform(rearrange(train_data[:, series_dim:, :], 'l c n->(l n) c'))
-                train_exog = rearrange(scaled_exog, '(l n) c -> l c n', l=train_data_l)
+                scaled_exog = self.scaler2.transform(
+                    rearrange(train_data[:, series_dim:, :], "l c n->(l n) c")
+                )
+                train_exog = rearrange(scaled_exog, "(l n) c -> l c n", l=train_data_l)
 
                 # Concatenate scaled data
                 train_data = np.concatenate([train_series, train_exog], axis=1)
         else:
             # Only series data, use scaler1
-            self.scaler1.fit(rearrange(train_data, 'l c n->(l n) c'))
+            self.scaler1.fit(rearrange(train_data, "l c n->(l n) c"))
             if config.norm:
-                scaled_data = self.scaler1.transform(rearrange(train_data, 'l c n->(l n) c'))
-                train_data = rearrange(scaled_data, '(l n) c -> l c n', l=train_data_l)
+                scaled_data = self.scaler1.transform(
+                    rearrange(train_data, "l c n->(l n) c")
+                )
+                train_data = rearrange(scaled_data, "(l n) c -> l c n", l=train_data_l)
 
         if train_ratio_in_tv != 1:
             if config.norm:
                 if exog_dim > 0:
                     # Scale validation series data
-                    scaled_series = self.scaler1.transform(rearrange(valid_data[:, :series_dim, :], 'l c n->(l n) c'))
-                    valid_series = rearrange(scaled_series, '(l n) c -> l c n', l=valid_data_l)
+                    scaled_series = self.scaler1.transform(
+                        rearrange(valid_data[:, :series_dim, :], "l c n->(l n) c")
+                    )
+                    valid_series = rearrange(
+                        scaled_series, "(l n) c -> l c n", l=valid_data_l
+                    )
 
                     # Scale validation exog data
-                    scaled_exog = self.scaler2.transform(rearrange(valid_data[:, series_dim:, :], 'l c n->(l n) c'))
-                    valid_exog = rearrange(scaled_exog, '(l n) c -> l c n', l=valid_data_l)
+                    scaled_exog = self.scaler2.transform(
+                        rearrange(valid_data[:, series_dim:, :], "l c n->(l n) c")
+                    )
+                    valid_exog = rearrange(
+                        scaled_exog, "(l n) c -> l c n", l=valid_data_l
+                    )
 
                     # Concatenate scaled data
                     valid_data = np.concatenate([valid_series, valid_exog], axis=1)
                 else:
-                    scaled_data = self.scaler1.transform(rearrange(valid_data, 'l c n->(l n) c'))
-                    valid_data = rearrange(scaled_data, '(l n) c -> l c n', l=valid_data_l)
+                    scaled_data = self.scaler1.transform(
+                        rearrange(valid_data, "l c n->(l n) c")
+                    )
+                    valid_data = rearrange(
+                        scaled_data, "(l n) c -> l c n", l=valid_data_l
+                    )
             valid_dataset, valid_data_loader = forecasting_data_provider(
                 valid_data,
                 config,
@@ -309,10 +333,12 @@ class DUET(ModelBase):
 
         # Set up optimizer for both models if MLP is used
         if self.MLP is not None:
-            optimizer = optim.Adam([
-                {'params': self.model.parameters(), 'lr': config.lr},
-                {'params': self.MLP.parameters(), 'lr': config.lr * 0.1}
-            ])
+            optimizer = optim.Adam(
+                [
+                    {"params": self.model.parameters(), "lr": config.lr},
+                    {"params": self.MLP.parameters(), "lr": config.lr * 0.1},
+                ]
+            )
         else:
             optimizer = optim.Adam(self.model.parameters(), lr=config.lr)
 
@@ -322,7 +348,9 @@ class DUET(ModelBase):
             p.numel() for p in self.model.parameters() if p.requires_grad
         )
         if self.MLP is not None:
-            total_params += sum(p.numel() for p in self.MLP.parameters() if p.requires_grad)
+            total_params += sum(
+                p.numel() for p in self.MLP.parameters() if p.requires_grad
+            )
 
         print(f"Total trainable parameters: {total_params}")
 
@@ -339,17 +367,19 @@ class DUET(ModelBase):
                 )
 
                 # Extract exog_future from target if exists
-                exog_future = target[:, -config.horizon:, series_dim:].to(self.device)
+                exog_future = target[:, -config.horizon :, series_dim:].to(self.device)
 
                 output, loss_importance = self.model(input)
 
                 if self.config.use_mlp and self.MLP is not None:
-                    transformer_output = output[:, -config.horizon:, :series_dim]
-                    output = self.MLP(torch.cat((transformer_output, exog_future), dim=-1))
+                    transformer_output = output[:, -config.horizon :, :series_dim]
+                    output = self.MLP(
+                        torch.cat((transformer_output, exog_future), dim=-1)
+                    )
                 else:
-                    output = output[:, -config.horizon:, :series_dim]
+                    output = output[:, -config.horizon :, :series_dim]
 
-                target = target[:, -config.horizon:, :series_dim]
+                target = target[:, -config.horizon :, :series_dim]
                 loss = criterion(output, target)
 
                 total_loss = loss + loss_importance
@@ -360,20 +390,22 @@ class DUET(ModelBase):
             if train_ratio_in_tv != 1:
                 valid_loss = self.validate(valid_data_loader, series_dim, criterion)
                 if self.MLP is not None:
-                    self.early_stopping(valid_loss, {'duet': self.model, 'mlp': self.MLP})
+                    self.early_stopping(
+                        valid_loss, {"duet": self.model, "mlp": self.MLP}
+                    )
                 else:
-                    self.early_stopping(valid_loss, {'duet': self.model})
+                    self.early_stopping(valid_loss, {"duet": self.model})
                 if self.early_stopping.early_stop:
                     break
 
             adjust_learning_rate(optimizer, epoch + 1, config)
 
     def forecast(
-            self,
-            horizon: int,
-            series: np.ndarray,
-            *,
-            covariates: Optional[dict] = None,
+        self,
+        horizon: int,
+        series: np.ndarray,
+        *,
+        covariates: Optional[dict] = None,
     ) -> np.ndarray:
         """
         Make predictions.
@@ -385,43 +417,49 @@ class DUET(ModelBase):
         if exog_data is not None:
             series = np.concatenate((series, exog_data), axis=1)
             if (
-                    hasattr(self.config, "output_chunk_length")
-                    and horizon != self.config.output_chunk_length
+                hasattr(self.config, "output_chunk_length")
+                and horizon != self.config.output_chunk_length
             ):
                 raise ValueError(
                     f"Error: 'exog' is enabled during training, but horizon ({horizon}) != output_chunk_length ({self.config.output_chunk_length}) during forecast."
                 )
 
         if self.early_stopping.check_point is not None:
-            self.model.load_state_dict(self.early_stopping.check_point['duet'])
-            if self.MLP is not None and 'mlp' in self.early_stopping.check_point:
-                self.MLP.load_state_dict(self.early_stopping.check_point['mlp'])
+            self.model.load_state_dict(self.early_stopping.check_point["duet"])
+            if self.MLP is not None and "mlp" in self.early_stopping.check_point:
+                self.MLP.load_state_dict(self.early_stopping.check_point["mlp"])
 
         series_l = series.shape[0]
         if self.config.norm:
             if exog_data is not None:
                 # Scale series data with scaler1
                 series_values = series[:, :series_dim, :]
-                scaled_series = self.scaler1.transform(rearrange(series_values, 'l c n->(l n) c'))
-                scaled_series = rearrange(scaled_series, '(l n) c -> l c n', l=series_l)
+                scaled_series = self.scaler1.transform(
+                    rearrange(series_values, "l c n->(l n) c")
+                )
+                scaled_series = rearrange(scaled_series, "(l n) c -> l c n", l=series_l)
 
                 # Scale exog data with scaler2
                 exog_values = series[:, series_dim:, :]
-                scaled_exog = self.scaler2.transform(rearrange(exog_values, 'l c n->(l n) c'))
-                scaled_exog = rearrange(scaled_exog, '(l n) c -> l c n', l=series_l)
+                scaled_exog = self.scaler2.transform(
+                    rearrange(exog_values, "l c n->(l n) c")
+                )
+                scaled_exog = rearrange(scaled_exog, "(l n) c -> l c n", l=series_l)
 
                 # Combine scaled data
                 series = np.concatenate([scaled_series, scaled_exog], axis=1)
             else:
-                scaled_data = self.scaler1.transform(rearrange(series, 'l c n->(l n) c'))
-                series = rearrange(scaled_data, '(l n) c -> l c n', l=series_l)
+                scaled_data = self.scaler1.transform(
+                    rearrange(series, "l c n->(l n) c")
+                )
+                series = rearrange(scaled_data, "(l n) c -> l c n", l=series_l)
 
         if self.model is None:
             raise ValueError("Model not trained. Call the fit() function first.")
 
         config = self.config
         # Get last seq_len data for prediction
-        test = series[-config.seq_len:, :, :]
+        test = series[-config.seq_len :, :, :]
 
         # Padding data for forecast
         padding_len = config.horizon
@@ -448,18 +486,20 @@ class DUET(ModelBase):
                     )
 
                     # Extract exog_future from target if exists
-                    exog_future = target[:, -config.horizon:, series_dim:]
+                    exog_future = target[:, -config.horizon :, series_dim:]
 
                     output, _ = self.model(input)
 
                     if self.config.use_mlp and self.MLP is not None:
-                        transformer_output = output[:, -config.horizon:, :series_dim]
-                        output = self.MLP(torch.cat((transformer_output, exog_future), dim=-1))
+                        transformer_output = output[:, -config.horizon :, :series_dim]
+                        output = self.MLP(
+                            torch.cat((transformer_output, exog_future), dim=-1)
+                        )
                     else:
-                        output = output[:, -config.horizon:, :series_dim]
+                        output = output[:, -config.horizon :, :series_dim]
 
                 column_num = output.shape[-1]
-                temp = output.cpu().numpy().reshape(-1, column_num)[-config.horizon:]
+                temp = output.cpu().numpy().reshape(-1, column_num)[-config.horizon :]
 
                 if answer is None:
                     answer = temp
@@ -474,12 +514,12 @@ class DUET(ModelBase):
                         )
                     return answer[-horizon:, :series_dim]
 
-                output = output.cpu().numpy()[:, -config.horizon:]
+                output = output.cpu().numpy()[:, -config.horizon :]
                 # Update test data with predictions
                 for i in range(config.horizon):
                     test[i + config.seq_len] = output[0, i, :]
 
-                test = test[config.horizon:]
+                test = test[config.horizon :]
                 # Padding data for next iteration
                 padded_data = np.zeros((config.horizon, test.shape[1], test.shape[2]))
                 test = np.concatenate([test, padded_data], axis=0)
@@ -494,15 +534,15 @@ class DUET(ModelBase):
                 )
 
     def batch_forecast(
-            self, horizon: int, batch_maker: BatchMaker, exog_futures, i, **kwargs
+        self, horizon: int, batch_maker: BatchMaker, exog_futures, i, **kwargs
     ) -> np.ndarray:
         """
         Make predictions by batch.
         """
         if self.early_stopping.check_point is not None:
-            self.model.load_state_dict(self.early_stopping.check_point['duet'])
-            if self.MLP is not None and 'mlp' in self.early_stopping.check_point:
-                self.MLP.load_state_dict(self.early_stopping.check_point['mlp'])
+            self.model.load_state_dict(self.early_stopping.check_point["duet"])
+            if self.MLP is not None and "mlp" in self.early_stopping.check_point:
+                self.MLP.load_state_dict(self.early_stopping.check_point["mlp"])
 
         if self.model is None:
             raise ValueError("Model not trained. Call the fit() function first.")
@@ -528,8 +568,8 @@ class DUET(ModelBase):
             exog_dim = exog_data.shape[-2]
             input_np = np.concatenate((input_np, exog_data), axis=2)
             if (
-                    hasattr(self.config, "output_chunk_length")
-                    and horizon != self.config.output_chunk_length
+                hasattr(self.config, "output_chunk_length")
+                and horizon != self.config.output_chunk_length
             ):
                 raise ValueError(
                     f"Error: 'exog' is enabled during training, but horizon ({horizon}) != output_chunk_length ({self.config.output_chunk_length}) during forecast."
@@ -538,39 +578,54 @@ class DUET(ModelBase):
             exog_dim = 0
 
         # Reshape input
-        input_np = rearrange(input_np, 'b l c n -> (b n) l c')
+        input_np = rearrange(input_np, "b l c n -> (b n) l c")
         input_np_b = input_np.shape[0]
 
         if self.config.norm:
             if exog_dim > 0:
                 # Scale series data with scaler1
                 series_data = input_np[:, :, :series_dim]
-                scaled_series = self.scaler1.transform(rearrange(series_data, 'b l c->(b l) c'))
-                scaled_series = rearrange(scaled_series, '(b l) c -> b l c', b=input_np_b)
+                scaled_series = self.scaler1.transform(
+                    rearrange(series_data, "b l c->(b l) c")
+                )
+                scaled_series = rearrange(
+                    scaled_series, "(b l) c -> b l c", b=input_np_b
+                )
 
                 # Scale exog data with scaler2
                 exog_data_to_scale = input_np[:, :, series_dim:]
-                scaled_exog = self.scaler2.transform(rearrange(exog_data_to_scale, 'b l c->(b l) c'))
-                scaled_exog = rearrange(scaled_exog, '(b l) c -> b l c', b=input_np_b)
+                scaled_exog = self.scaler2.transform(
+                    rearrange(exog_data_to_scale, "b l c->(b l) c")
+                )
+                scaled_exog = rearrange(scaled_exog, "(b l) c -> b l c", b=input_np_b)
 
                 # Combine scaled data
                 input_np = np.concatenate([scaled_series, scaled_exog], axis=2)
             else:
-                scaled_data = self.scaler1.transform(rearrange(input_np, 'b l c->(b l) c'))
-                input_np = rearrange(scaled_data, '(b l) c -> b l c', b=input_np_b)
+                scaled_data = self.scaler1.transform(
+                    rearrange(input_np, "b l c->(b l) c")
+                )
+                input_np = rearrange(scaled_data, "(b l) c -> b l c", b=input_np_b)
 
         # Get exog_future from provided futures
-        exog_future = torch.tensor(exog_futures[i * real_batch_size: (i + 1) * real_batch_size, -horizon:, :]).to(
-            self.device)
+        exog_future = torch.tensor(
+            exog_futures[i * real_batch_size : (i + 1) * real_batch_size, -horizon:, :]
+        ).to(self.device)
 
         if self.config.norm and exog_dim > 0:
             exog_future_np = exog_future.cpu().numpy()
             exog_future_b = exog_future_np.shape[0]
-            scaled_exog_future = self.scaler2.transform(rearrange(exog_future_np, 'b l c->(b l) c'))
-            scaled_exog_future = rearrange(scaled_exog_future, '(b l) c -> b l c', b=exog_future_b)
+            scaled_exog_future = self.scaler2.transform(
+                rearrange(exog_future_np, "b l c->(b l) c")
+            )
+            scaled_exog_future = rearrange(
+                scaled_exog_future, "(b l) c -> b l c", b=exog_future_b
+            )
             exog_future = torch.tensor(scaled_exog_future).to(self.device)
 
-        answers = self._perform_rolling_predictions(horizon, input_np, exog_future, series_dim)
+        answers = self._perform_rolling_predictions(
+            horizon, input_np, exog_future, series_dim
+        )
 
         if self.config.norm:
             # Only inverse transform series data with scaler1
@@ -583,11 +638,11 @@ class DUET(ModelBase):
         return answers[..., :series_dim]
 
     def _perform_rolling_predictions(
-            self,
-            horizon: int,
-            input_np: np.ndarray,
-            exog_future: torch.Tensor,
-            series_dim: int,
+        self,
+        horizon: int,
+        input_np: np.ndarray,
+        exog_future: torch.Tensor,
+        series_dim: int,
     ) -> np.ndarray:
         """
         Perform rolling predictions using the given input data and marks.
@@ -601,10 +656,12 @@ class DUET(ModelBase):
                 output, _ = self.model(input)
 
                 if self.config.use_mlp and self.MLP is not None:
-                    transformer_output = output[:, -self.config.horizon:, :series_dim]
-                    output = self.MLP(torch.cat((transformer_output, exog_future), dim=-1))
+                    transformer_output = output[:, -self.config.horizon :, :series_dim]
+                    output = self.MLP(
+                        torch.cat((transformer_output, exog_future), dim=-1)
+                    )
                 else:
-                    output = output[:, -self.config.horizon:, :series_dim]
+                    output = output[:, -self.config.horizon :, :series_dim]
 
                 column_num = output.shape[-1]
                 real_batch_size = output.shape[0]
@@ -612,7 +669,7 @@ class DUET(ModelBase):
                     output.cpu()
                     .numpy()
                     .reshape(real_batch_size, -1, column_num)[
-                    :, -self.config.horizon:, :
+                        :, -self.config.horizon :, :
                     ]
                 )
                 answers.append(answer)
@@ -621,22 +678,22 @@ class DUET(ModelBase):
                     break
 
                 rolling_time += 1
-                output = output.cpu().numpy()[:, -self.config.horizon:, :]
+                output = output.cpu().numpy()[:, -self.config.horizon :, :]
                 input_np = self._get_rolling_data(input_np, output, rolling_time)
 
         answers = np.concatenate(answers, axis=1)
         return answers[:, -horizon:, :]
 
     def _get_rolling_data(
-            self,
-            input_np: np.ndarray,
-            output: Optional[np.ndarray],
-            rolling_time: int,
+        self,
+        input_np: np.ndarray,
+        output: Optional[np.ndarray],
+        rolling_time: int,
     ) -> np.ndarray:
         """
         Prepare rolling data based on the current rolling time.
         """
         if rolling_time > 0:
             input_np = np.concatenate((input_np, output), axis=1)
-            input_np = input_np[:, -self.config.seq_len:, :]
+            input_np = input_np[:, -self.config.seq_len :, :]
         return input_np
